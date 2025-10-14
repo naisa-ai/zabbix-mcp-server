@@ -56,6 +56,12 @@ A comprehensive Model Context Protocol (MCP) server for Zabbix integration using
 - `user_update` - Update user information
 - `user_delete` - Remove user accounts
 
+### 🔗 Proxy Management
+- `proxy_get` - Retrieve Zabbix proxies with filtering
+- `proxy_create` - Create new proxies
+- `proxy_update` - Update existing proxies
+- `proxy_delete` - Remove proxies
+
 ### 🔧 Maintenance Management
 - `maintenance_get` - Retrieve maintenance periods
 - `maintenance_create` - Schedule maintenance windows
@@ -225,6 +231,20 @@ history_get(
     itemids=["12345"],
     time_from=1640995200,
     limit=100
+)
+```
+
+**Get all proxies:**
+```python
+proxy_get()
+```
+
+**Create a new active proxy:**
+```python
+proxy_create(
+    host="proxy-01",
+    status=5,
+    description="Main datacenter proxy"
 )
 ```
 
