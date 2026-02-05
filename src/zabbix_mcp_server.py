@@ -88,6 +88,26 @@ def is_read_only() -> bool:
     return os.getenv("READ_ONLY", "true").lower() in ("true", "1", "yes")
 
 
+def _to_json_serializable(obj: Any) -> Any:
+    """Recursively convert data to JSON-serializable types.
+    Avoids embedding Python repr (single quotes) from default=str for nested objects.
+    """
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, bytes):
+        try:
+            return obj.decode("utf-8", errors="replace")
+        except Exception:
+            return str(obj)
+    if isinstance(obj, dict):
+        return {str(k): _to_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_json_serializable(v) for v in obj]
+    if hasattr(obj, "isoformat"):  # datetime, date, time
+        return obj.isoformat()
+    return str(obj)
+
+
 def format_response(data: Any) -> str:
     """Format response data as JSON string.
     
@@ -97,7 +117,8 @@ def format_response(data: Any) -> str:
     Returns:
         str: JSON formatted string
     """
-    return json.dumps(data, indent=2, default=str)
+    normalized = _to_json_serializable(data)
+    return json.dumps(normalized, indent=2)
 
 
 def validate_read_only() -> None:
