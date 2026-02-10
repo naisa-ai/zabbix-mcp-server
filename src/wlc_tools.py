@@ -189,6 +189,9 @@ async def get_wlc_bsnAPOperationStatus_lastvalue(
         params = {"output": ["itemid", "hostid", "name", "key_", "lastvalue", "lastclock"], "search": {"key_": helper.KEY_BSN_AP_OPERATION_STATUS}, "hostids": hostids}
         data = client.item.get(**params)
         items = helper.parse_wlc_bsnAPOperationStatus_lastvalue(data)
+        # Cisco WLC uses a single bulk item (key_ exactly bsnAPOperationStatus) with multi-line lastvalue; parse it when per-AP items are empty
+        if not items:
+            items = helper.parse_cisco_bsnAPOperationStatus_bulk(data)
         return {"items": items, "count": len(items)}
     except Exception as e:
         return {"error": str(e), "items": []}
@@ -211,11 +214,18 @@ async def get_ap_mac_inventory(
             return {"inventory": {}, "count": 0}
         hostids = [h.get("hostid") for h in hosts if h.get("hostid")]
         client = _get_zabbix_client()
-        name_result = client.item.get(output=["itemid", "hostid", "name", "key_", "lastvalue"], search={"key_": "bsnAPName"}, hostids=hostids)
-        ip_result = client.item.get(output=["itemid", "hostid", "name", "key_", "lastvalue"], search={"key_": "bsnAPIP"}, hostids=hostids)
-        name_items = name_result
-        ip_items = ip_result
-        inventory = helper.build_ap_inventory_mac_to_host(hosts, name_items, ip_items, mac_from_key_index=True)
+        hostid_to_host = {h.get("hostid"): h.get("host") or h.get("name") or "" for h in hosts}
+        # Prefer Cisco-style items (bsnAPDot3MacAddress + bsnApIpAddress), same as get_active_aps_for_host
+        mac_result = client.item.get(output="extend", search={"key_": "bsnAPDot3MacAddress"}, hostids=hostids)
+        ip_result = client.item.get(output="extend", search={"key_": "bsnApIpAddress"}, hostids=hostids)
+        mac_items = _items_to_dict_list(mac_result)
+        ip_items = _items_to_dict_list(ip_result)
+        inventory = helper.build_cisco_ap_name_inventory(mac_items, ip_items, hostid_to_host)
+        # Fallback: bsnAPName / bsnAPIP (e.g. legacy or other vendors) when Cisco-style inventory is empty
+        if not inventory:
+            name_result = client.item.get(output=["itemid", "hostid", "name", "key_", "lastvalue"], search={"key_": "bsnAPName"}, hostids=hostids)
+            ip_result_legacy = client.item.get(output=["itemid", "hostid", "name", "key_", "lastvalue"], search={"key_": "bsnAPIP"}, hostids=hostids)
+            inventory = helper.build_ap_inventory_mac_to_host(hosts, name_result, ip_result_legacy, mac_from_key_index=True)
         return {"inventory": inventory, "count": len(inventory)}
     except Exception as e:
         return {"error": str(e), "inventory": {}}
@@ -378,6 +388,21 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                     for entry in active_aps:
                         if not entry.get("ap_name"):
                             entry["ap_name"] = ap_index_to_name.get(entry.get("ap_index", ""), "")
+                # Aruba: fill ap_ip from ap.ip[key] items (key index matches ap_index)
+                ip_result = client.item.get(hostids=[hid], output="extend", search={"key_": helper.KEY_ARUBA_AP_IP})
+                ip_items = _items_to_dict_list(ip_result)
+                ap_index_to_ip = {}
+                for it in ip_items:
+                    key = (it.get("key_") or it.get("key", "")) or ""
+                    if helper.KEY_ARUBA_AP_IP not in key:
+                        continue
+                    ap_index = helper._index_from_key(key)
+                    if not ap_index:
+                        continue
+                    ap_index_to_ip[ap_index] = (it.get("lastvalue") or "").strip()
+                for entry in active_aps:
+                    if not entry.get("ap_ip"):
+                        entry["ap_ip"] = ap_index_to_ip.get(entry.get("ap_index", ""), "")
         return {"hostid": hid, "vendor": vendor or "", "active_aps": active_aps, "count": len(active_aps)}
     except Exception as e:
         return {"error": str(e), "hostid": hid, "active_aps": [], "count": 0}

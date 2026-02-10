@@ -10,6 +10,15 @@ Author: Zabbix MCP Server Contributors
 License: MIT
 """
 
+# When run as script (e.g. python src/zabbix_mcp_server.py), set up package for relative imports
+if __package__ is None or __package__ == "":
+    import sys
+    from pathlib import Path
+    _root = Path(__file__).resolve().parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    __package__ = "src"
+
 import os
 import json
 import logging

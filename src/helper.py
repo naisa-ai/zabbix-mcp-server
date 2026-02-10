@@ -64,6 +64,7 @@ KEY_ARUBA_AP_STATUS = "ap.status"
 KEY_ARUBA_RADIO_CONNECTED_CLIENTS = "radio.connectedClients"
 KEY_ARUBA_AP_CLIENTS_SUM = "ap.clients.sum"
 KEY_ARUBA_AP_NAME = "ap.name"
+KEY_ARUBA_AP_IP = "ap.ip"
 
 _CISCO_BSN_AP_OID_LINE = re.compile(r"\.6\.([\d.]+)\s*=\s*INTEGER:\s*(\d+)")
 
