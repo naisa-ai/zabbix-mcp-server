@@ -1578,5 +1578,93 @@ def main():
         raise
 
 
+# WLC tools (Wireless LAN Controller / active APs)
+from .wlc_tools import (  # noqa: E402
+    get_active_wlc_hosts as _get_active_wlc_hosts,
+    get_active_ap_client_counts as _get_active_ap_client_counts,
+    get_active_aps_for_host as _get_active_aps_for_host,
+    get_ap_mac_inventory as _get_ap_mac_inventory,
+    get_client_counts_for_ap_hosts as _get_client_counts_for_ap_hosts,
+    get_clients_per_ap as _get_clients_per_ap,
+    get_host_item_errors as _get_host_item_errors,
+    get_wlc_bsnAPOperationStatus_lastvalue as _get_wlc_bsnAPOperationStatus_lastvalue,
+)
+
+
+@mcp.tool()
+async def get_active_wlc_hosts(
+    wlc_hostid: Optional[str] = None,
+    groupids: Optional[str] = None,
+    data_age_seconds: Optional[int] = None,
+) -> str:
+    """Get active WLC hosts (with recent item data). Optional filter by hostid or groupids (comma-separated)."""
+    result = await _get_active_wlc_hosts(wlc_hostid=wlc_hostid, groupids=groupids, data_age_seconds=data_age_seconds)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_host_item_errors(
+    wlc_hostid: Optional[str] = None,
+    host_name: Optional[str] = None,
+) -> str:
+    """Get Zabbix items with errors for a WLC host (by hostid or host name)."""
+    result = await _get_host_item_errors(wlc_hostid=wlc_hostid, host_name=host_name)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_wlc_bsnAPOperationStatus_lastvalue(
+    wlc_hostid: Optional[str] = None,
+    groupids: Optional[str] = None,
+) -> str:
+    """Get bsnAPOperationStatus item last values for active WLC hosts."""
+    result = await _get_wlc_bsnAPOperationStatus_lastvalue(wlc_hostid=wlc_hostid, groupids=groupids)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_ap_mac_inventory(
+    wlc_hostid: Optional[str] = None,
+    groupids: Optional[str] = None,
+) -> str:
+    """Get AP MAC-to-host inventory for active WLC hosts."""
+    result = await _get_ap_mac_inventory(wlc_hostid=wlc_hostid, groupids=groupids)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_client_counts_for_ap_hosts(hostids: str) -> str:
+    """Get client counts per host for given hostids (comma-separated)."""
+    result = await _get_client_counts_for_ap_hosts(hostids=hostids)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_clients_per_ap(hostids: str) -> str:
+    """Get clients per AP for given hostids (comma-separated). Returns by_host breakdown."""
+    result = await _get_clients_per_ap(hostids=hostids)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_active_aps_for_host(hostid: str) -> str:
+    """Get active APs for a single WLC host by hostid."""
+    result = await _get_active_aps_for_host(hostid=hostid)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_active_ap_client_counts(
+    wlc_hostid: Optional[str] = None,
+    groupids: Optional[str] = None,
+) -> str:
+    """Get active APs with client counts for WLC hosts (optional filter by hostid or groupids)."""
+    result = await _get_active_ap_client_counts(wlc_hostid=wlc_hostid, groupids=groupids)
+    return format_response(result)
+
+
+__all__ = ["main", "mcp"]
+
+
 if __name__ == "__main__":
     main()

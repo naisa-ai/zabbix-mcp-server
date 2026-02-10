@@ -38,6 +38,10 @@ Documentation = "https://github.com/mpeirone/zabbix-mcp-server#readme"
 [project.scripts]
 zabbix-mcp = "src.zabbix_mcp_server:main"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
