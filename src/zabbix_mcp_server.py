@@ -10,7 +10,8 @@ Author: Zabbix MCP Server Contributors
 License: MIT
 """
 
-# When run as script (e.g. python src/zabbix_mcp_server.py), set up package for relative imports
+# When run as script (e.g. python src/zabbix_mcp_server.py), set up package for relative imports.
+# TODO: align with a consistent pythonpath/package convention across repos.
 if __package__ is None or __package__ == "":
     import sys
     from pathlib import Path
@@ -1593,11 +1594,11 @@ from .wlc_tools import (  # noqa: E402
     get_active_wlc_hosts as _get_active_wlc_hosts,
     get_active_ap_client_counts as _get_active_ap_client_counts,
     get_active_aps_for_host as _get_active_aps_for_host,
-    get_ap_mac_inventory as _get_ap_mac_inventory,
+    get_cisco_wlc_ap_mac_inventory as _get_cisco_wlc_ap_mac_inventory,
     get_client_counts_for_ap_hosts as _get_client_counts_for_ap_hosts,
     get_clients_per_ap as _get_clients_per_ap,
     get_host_item_errors as _get_host_item_errors,
-    get_wlc_bsnAPOperationStatus_lastvalue as _get_wlc_bsnAPOperationStatus_lastvalue,
+    get_cisco_wlc_bsnAPOperationStatus_lastvalue as _get_cisco_wlc_bsnAPOperationStatus_lastvalue,
 )
 
 
@@ -1642,11 +1643,11 @@ async def get_host_item_errors(
 
 
 @mcp.tool()
-async def get_wlc_bsnAPOperationStatus_lastvalue(
+async def get_cisco_wlc_bsnAPOperationStatus_lastvalue(
     wlc_hostid: Optional[Union[str, int]] = None,
     groupids: Optional[str] = None,
 ) -> str:
-    """Get bsnAPOperationStatus item last values for active WLC hosts (Cisco AP operation status).
+    """Get bsnAPOperationStatus item last values for active Cisco WLC hosts (Cisco AP operation status).
     
     Args:
         wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
@@ -1655,18 +1656,18 @@ async def get_wlc_bsnAPOperationStatus_lastvalue(
     Returns:
         str: JSON with items list (itemid, hostid, name, key_, lastvalue, etc.) and count
     """
-    result = await _get_wlc_bsnAPOperationStatus_lastvalue(
+    result = await _get_cisco_wlc_bsnAPOperationStatus_lastvalue(
         wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
     )
     return format_response(result)
 
 
 @mcp.tool()
-async def get_ap_mac_inventory(
+async def get_cisco_wlc_ap_mac_inventory(
     wlc_hostid: Optional[Union[str, int]] = None,
     groupids: Optional[str] = None,
 ) -> str:
-    """Get AP MAC-to-host inventory for active WLC hosts (MAC address to host/name/IP mapping).
+    """Get AP MAC-to-host inventory for active Cisco WLC hosts (bsnAP* keys; MAC to host/name/IP).
     
     Args:
         wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
@@ -1675,7 +1676,7 @@ async def get_ap_mac_inventory(
     Returns:
         str: JSON with inventory dict (MAC -> ap_host, ap_name, ap_ip) and count
     """
-    result = await _get_ap_mac_inventory(wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids)
+    result = await _get_cisco_wlc_ap_mac_inventory(wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids)
     return format_response(result)
 
 

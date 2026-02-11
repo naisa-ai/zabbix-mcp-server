@@ -104,6 +104,11 @@ def normalize_hostids(hostids: Any) -> List[str]:
     return [h.strip() for h in s.split(",") if h.strip() and h.strip().lower() != "null"]
 
 
+def get_item_key(it: Dict[str, Any]) -> str:
+    """Return item key from a Zabbix item dict (key_ or key field)."""
+    return (it.get("key_") or it.get("key")) or ""
+
+
 def _index_from_key(key: str) -> str:
     if not key or "[" not in key or "]" not in key:
         return ""
@@ -127,7 +132,7 @@ def parse_cisco_bsnAPOperationStatus_bulk(items_json: Any) -> List[Dict[str, Any
     items = _ensure_list(items_json)
     out: List[Dict[str, Any]] = []
     for it in items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if key.strip() != KEY_BSN_AP_OPERATION_STATUS:
             continue
         raw = it.get("lastvalue") or ""
@@ -147,7 +152,7 @@ def parse_wlc_bsnAPOperationStatus_lastvalue(items_json: Any) -> List[Dict[str, 
     items = _ensure_list(items_json)
     out = []
     for it in items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_BSN_AP_OPERATION_STATUS not in key:
             continue
         if key.strip() == KEY_BSN_AP_OPERATION_STATUS:
@@ -179,7 +184,7 @@ def build_ap_inventory_mac_to_host(
     hostid_to_host = {h.get("hostid"): h.get("host") or h.get("name") or "" for h in hosts}
     by_key: Dict[tuple, Dict[str, str]] = {}
     for it in name_items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_BSN_AP_NAME not in key and "bsnAPName" not in key:
             continue
         hostid = it.get("hostid")
@@ -195,7 +200,7 @@ def build_ap_inventory_mac_to_host(
             "_mac": mac,
         }
     for it in ip_items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_BSN_AP_IP not in key and "bsnAPIP" not in key and "ap" not in key.lower():
             continue
         hostid = it.get("hostid")
@@ -230,7 +235,7 @@ def build_cisco_ap_name_inventory(
     ip_items = _ensure_list(items_ip_json)
     by_ap_name: Dict[tuple, Dict[str, str]] = {}
     for it in mac_items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_BSN_AP_DOT3_MAC not in key and "bsnAPDot3MacAddress" not in key and "bsnAPEthernetMacAddress" not in key:
             continue
         ap_name = _index_from_key(key)
@@ -248,7 +253,7 @@ def build_cisco_ap_name_inventory(
             "ap_host": hostid_to_host.get(hostid, ""),
         }
     for it in ip_items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_BSN_AP_IP_ADDRESS not in key and "bsnApIpAddress" not in key:
             continue
         ap_name = _index_from_key(key)
@@ -270,7 +275,7 @@ def parse_cisco_client_count_by_ap_name(items_json: Any) -> Dict[tuple, int]:
     items = _ensure_list(items_json)
     by_ap: Dict[tuple, int] = {}
     for it in items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_BSN_AP_IF_NO_OF_USERS_PREFIX not in key:
             continue
         ap_name = _index_from_key(key)
@@ -291,7 +296,7 @@ def parse_client_counts_for_hosts(items_json: Any) -> Dict[str, int]:
     by_host: Dict[str, int] = {}
     patterns = ["bsnApIfNoOfUsers", "NoOfUsers", "client", "Client", "connectedClients"]
     for it in items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if not any(p in key for p in patterns):
             continue
         try:
@@ -308,7 +313,7 @@ def parse_aruba_ap_status(items_json: Any) -> List[Dict[str, Any]]:
     items = _ensure_list(items_json)
     out = []
     for it in items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_ARUBA_AP_STATUS not in key:
             continue
         ap_index = _index_from_key(key)
@@ -322,7 +327,7 @@ def parse_aruba_radio_connected_clients(items_json: Any) -> Dict[tuple, int]:
     items = _ensure_list(items_json)
     by_ap: Dict[tuple, int] = {}
     for it in items:
-        key = (it.get("key_") or it.get("key", "")) or ""
+        key = get_item_key(it)
         if KEY_ARUBA_RADIO_CONNECTED_CLIENTS not in key:
             continue
         full_index = _index_from_key(key)

@@ -3,6 +3,9 @@ WLC tools: async functions that call Zabbix API via get_zabbix_client().
 
 Same pattern as zabbix_mcp_server.py (get_zabbix_client, client.host.get / client.item.get).
 Registered as MCP tools in zabbix_mcp_server; also importable from here (e.g. WLC_AGENT_TOOLS).
+
+Vendor: Cisco-specific tools are prefixed get_cisco_wlc_* (e.g. get_cisco_wlc_ap_mac_inventory).
+Others are vendor-agnostic or support both Cisco and Aruba (e.g. get_clients_per_ap).
 """
 
 import os
@@ -151,7 +154,7 @@ async def get_host_item_errors(
         items_all = _api_result_to_list(items_data)
         with_errors = helper.filter_items_with_errors(items_data)
         out = [
-            {"key_": it.get("key_") or it.get("key", ""), "name": (it.get("name") or "")[:80], "state": it.get("state", ""), "error": (it.get("error") or "").strip()}
+            {"key_": helper.get_item_key(it), "name": (it.get("name") or "")[:80], "state": it.get("state", ""), "error": (it.get("error") or "").strip()}
             for it in with_errors[: helper.MAX_ITEMS_WITH_ERRORS_RETURNED]
         ]
         total_with_errors = len(with_errors)
@@ -169,7 +172,7 @@ async def get_host_item_errors(
         return {"error": str(e), "items_with_errors": [], "count": 0, "total_items": 0}
 
 
-async def get_wlc_bsnAPOperationStatus_lastvalue(
+async def get_cisco_wlc_bsnAPOperationStatus_lastvalue(
     wlc_hostid: Optional[str] = None,
     groupids: Optional[str] = None,
 ) -> dict:
@@ -197,12 +200,13 @@ async def get_wlc_bsnAPOperationStatus_lastvalue(
         return {"error": str(e), "items": []}
 
 
-async def get_ap_mac_inventory(
+async def get_cisco_wlc_ap_mac_inventory(
     wlc_hostid: Optional[str] = None,
     groupids: Optional[str] = None,
 ) -> dict:
+    """AP MAC-to-host inventory. Cisco-oriented (bsnAP* keys); fallback to bsnAPName/bsnAPIP."""
     try:
-        _get_zabbix_client()
+        client = _get_zabbix_client()
     except Exception as e:
         return {"error": "Zabbix API not available", "inventory": {}}
     try:
@@ -213,7 +217,6 @@ async def get_ap_mac_inventory(
         if not hosts:
             return {"inventory": {}, "count": 0}
         hostids = [h.get("hostid") for h in hosts if h.get("hostid")]
-        client = _get_zabbix_client()
         hostid_to_host = {h.get("hostid"): h.get("host") or h.get("name") or "" for h in hosts}
         # Prefer Cisco-style items (bsnAPDot3MacAddress + bsnApIpAddress), same as get_active_aps_for_host
         mac_result = client.item.get(output="extend", search={"key_": "bsnAPDot3MacAddress"}, hostids=hostids)
@@ -349,7 +352,7 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                     radio_result = client.item.get(hostids=[hid], output="extend", search={"key_": helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS})
                     radio_items = _items_to_dict_list(radio_result)
                     for it in radio_items:
-                        key = (it.get("key_") or it.get("key", "")) or ""
+                        key = helper.get_item_key(it)
                         if helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS not in key:
                             continue
                         full_index = helper._index_from_key(key)
@@ -365,7 +368,7 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                             name_result = client.item.get(hostids=[hid], output="extend", search={"key_": key_pattern})
                             name_items = _items_to_dict_list(name_result)
                             for it in name_items:
-                                key = (it.get("key_") or it.get("key", "")) or ""
+                                key = helper.get_item_key(it)
                                 if key_pattern not in key:
                                     continue
                                 ap_index = helper._index_from_key(key)
@@ -384,7 +387,7 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                 ip_items = _items_to_dict_list(ip_result)
                 ap_index_to_ip = {}
                 for it in ip_items:
-                    key = (it.get("key_") or it.get("key", "")) or ""
+                    key = helper.get_item_key(it)
                     if helper.KEY_ARUBA_AP_IP not in key:
                         continue
                     ap_index = helper._index_from_key(key)
@@ -454,8 +457,8 @@ async def get_active_ap_client_counts(
 WLC_AGENT_TOOLS = [
     get_active_wlc_hosts,
     get_host_item_errors,
-    get_wlc_bsnAPOperationStatus_lastvalue,
-    get_ap_mac_inventory,
+    get_cisco_wlc_bsnAPOperationStatus_lastvalue,
+    get_cisco_wlc_ap_mac_inventory,
     get_client_counts_for_ap_hosts,
     get_clients_per_ap,
     get_active_aps_for_host,
