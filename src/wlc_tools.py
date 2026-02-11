@@ -459,8 +459,6 @@ async def get_active_ap_client_counts(
 WLC_AGENT_TOOLS = [
     get_active_wlc_hosts,
     get_host_item_errors,
-    get_cisco_wlc_bsnAPOperationStatus_lastvalue,
-    get_cisco_wlc_ap_mac_inventory,
     get_client_counts_for_ap_hosts,
     get_clients_per_ap,
     get_active_aps_for_host,

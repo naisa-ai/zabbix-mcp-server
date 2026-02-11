@@ -1594,11 +1594,9 @@ from .wlc_tools import (  # noqa: E402
     get_active_wlc_hosts as _get_active_wlc_hosts,
     get_active_ap_client_counts as _get_active_ap_client_counts,
     get_active_aps_for_host as _get_active_aps_for_host,
-    get_cisco_wlc_ap_mac_inventory as _get_cisco_wlc_ap_mac_inventory,
     get_client_counts_for_ap_hosts as _get_client_counts_for_ap_hosts,
     get_clients_per_ap as _get_clients_per_ap,
     get_host_item_errors as _get_host_item_errors,
-    get_cisco_wlc_bsnAPOperationStatus_lastvalue as _get_cisco_wlc_bsnAPOperationStatus_lastvalue,
 )
 
 
@@ -1639,44 +1637,6 @@ async def get_host_item_errors(
         str: JSON with hostid, host, items_with_errors list (key_, name, state, error), count, total_items
     """
     result = await _get_host_item_errors(wlc_hostid=helper.normalize_hostid(wlc_hostid), host_name=host_name)
-    return format_response(result)
-
-
-@mcp.tool()
-async def get_cisco_wlc_bsnAPOperationStatus_lastvalue(
-    wlc_hostid: Optional[Union[str, int]] = None,
-    groupids: Optional[str] = None,
-) -> str:
-    """Get bsnAPOperationStatus item last values for active Cisco WLC hosts (Cisco AP operation status).
-    
-    Args:
-        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
-        groupids: Optional comma-separated host group IDs to filter by
-        
-    Returns:
-        str: JSON with items list (itemid, hostid, name, key_, lastvalue, etc.) and count
-    """
-    result = await _get_cisco_wlc_bsnAPOperationStatus_lastvalue(
-        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
-    )
-    return format_response(result)
-
-
-@mcp.tool()
-async def get_cisco_wlc_ap_mac_inventory(
-    wlc_hostid: Optional[Union[str, int]] = None,
-    groupids: Optional[str] = None,
-) -> str:
-    """Get AP MAC-to-host inventory for active Cisco WLC hosts (bsnAP* keys; MAC to host/name/IP).
-    
-    Args:
-        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
-        groupids: Optional comma-separated host group IDs to filter by
-        
-    Returns:
-        str: JSON with inventory dict (MAC -> ap_host, ap_name, ap_ip) and count
-    """
-    result = await _get_cisco_wlc_ap_mac_inventory(wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids)
     return format_response(result)
 
 
