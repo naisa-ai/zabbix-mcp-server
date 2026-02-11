@@ -10,6 +10,16 @@ Author: Zabbix MCP Server Contributors
 License: MIT
 """
 
+# When run as script (e.g. python src/zabbix_mcp_server.py), set up package for relative imports.
+# TODO: align with a consistent pythonpath/package convention across repos.
+if __package__ is None or __package__ == "":
+    import sys
+    from pathlib import Path
+    _root = Path(__file__).resolve().parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    __package__ = "src"
+
 import os
 import json
 import logging
@@ -1576,6 +1586,181 @@ def main():
     except Exception as e:
         logger.error(f"Server error: {e}")
         raise
+
+
+# WLC tools (Wireless LAN Controller / active APs)
+from . import helper  # noqa: E402
+from .wlc_tools import (  # noqa: E402
+    get_active_wlc_hosts as _get_active_wlc_hosts,
+    get_active_ap_client_counts as _get_active_ap_client_counts,
+    get_active_aps_for_host as _get_active_aps_for_host,
+    get_cisco_wlc_ap_mac_inventory as _get_cisco_wlc_ap_mac_inventory,
+    get_client_counts_for_ap_hosts as _get_client_counts_for_ap_hosts,
+    get_clients_per_ap as _get_clients_per_ap,
+    get_host_item_errors as _get_host_item_errors,
+    get_cisco_wlc_bsnAPOperationStatus_lastvalue as _get_cisco_wlc_bsnAPOperationStatus_lastvalue,
+)
+
+
+@mcp.tool()
+async def get_active_wlc_hosts(
+    wlc_hostid: Optional[Union[str, int]] = None,
+    groupids: Optional[str] = None,
+    data_age_seconds: Optional[int] = None,
+) -> str:
+    """Get active WLC hosts (Wireless LAN Controllers) with recent item data.
+    
+    Args:
+        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
+        groupids: Optional comma-separated host group IDs to filter by
+        data_age_seconds: Maximum age in seconds for item data (default from env ZABBIX_ACTIVE_HOSTS_DATA_AGE_SECONDS or 3600)
+        
+    Returns:
+        str: JSON with hosts list and count (hostid, host, name per host)
+    """
+    result = await _get_active_wlc_hosts(
+        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids, data_age_seconds=data_age_seconds
+    )
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_host_item_errors(
+    wlc_hostid: Optional[Union[str, int]] = None,
+    host_name: Optional[str] = None,
+) -> str:
+    """Get Zabbix items that have errors for a WLC host.
+    
+    Args:
+        wlc_hostid: WLC host ID (str or int). Use either wlc_hostid or host_name
+        host_name: WLC host name (resolved to hostid). Use either wlc_hostid or host_name
+        
+    Returns:
+        str: JSON with hostid, host, items_with_errors list (key_, name, state, error), count, total_items
+    """
+    result = await _get_host_item_errors(wlc_hostid=helper.normalize_hostid(wlc_hostid), host_name=host_name)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_cisco_wlc_bsnAPOperationStatus_lastvalue(
+    wlc_hostid: Optional[Union[str, int]] = None,
+    groupids: Optional[str] = None,
+) -> str:
+    """Get bsnAPOperationStatus item last values for active Cisco WLC hosts (Cisco AP operation status).
+    
+    Args:
+        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
+        groupids: Optional comma-separated host group IDs to filter by
+        
+    Returns:
+        str: JSON with items list (itemid, hostid, name, key_, lastvalue, etc.) and count
+    """
+    result = await _get_cisco_wlc_bsnAPOperationStatus_lastvalue(
+        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
+    )
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_cisco_wlc_ap_mac_inventory(
+    wlc_hostid: Optional[Union[str, int]] = None,
+    groupids: Optional[str] = None,
+) -> str:
+    """Get AP MAC-to-host inventory for active Cisco WLC hosts (bsnAP* keys; MAC to host/name/IP).
+    
+    Args:
+        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
+        groupids: Optional comma-separated host group IDs to filter by
+        
+    Returns:
+        str: JSON with inventory dict (MAC -> ap_host, ap_name, ap_ip) and count
+    """
+    result = await _get_cisco_wlc_ap_mac_inventory(wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids)
+    return format_response(result)
+
+
+@mcp.tool()
+async def get_client_counts_for_ap_hosts(hostids: Optional[Union[List[str], str, int]] = None) -> str:
+    """Get total client count per WLC host for given host IDs.
+    
+    Args:
+        hostids: List of host IDs (e.g. ["10782", "10783"]), comma-separated string, or single id (str/int)
+        
+    Returns:
+        str: JSON with counts dict (hostid -> total client count)
+    """
+    try:
+        ids = helper.normalize_hostids(hostids)
+        if not ids:
+            return format_response({"error": "hostids required (list of host IDs)", "counts": {}})
+        result = await _get_client_counts_for_ap_hosts(hostids=ids)
+        return format_response(result)
+    except Exception as e:
+        return format_response({"error": str(e), "counts": {}})
+
+
+@mcp.tool()
+async def get_clients_per_ap(hostids: Optional[Union[List[str], str, int]] = None) -> str:
+    """Get client count per AP for given WLC host IDs (Cisco and Aruba).
+    
+    Args:
+        hostids: List of host IDs (e.g. ["10782", "10783"]), comma-separated string, or single id (str/int)
+        
+    Returns:
+        str: JSON with by_host dict (hostid -> list of {ap, client_count}) and hostids list
+    """
+    try:
+        ids = helper.normalize_hostids(hostids)
+        if not ids:
+            return format_response({"error": "hostids required (list of host IDs)", "by_host": {}, "hostids": []})
+        result = await _get_clients_per_ap(hostids=ids)
+        return format_response(result)
+    except Exception as e:
+        return format_response({"error": str(e), "by_host": {}, "hostids": []})
+
+
+@mcp.tool()
+async def get_active_aps_for_host(hostid: Optional[Union[str, int]] = None) -> str:
+    """Get active APs for a single WLC host (Cisco and Aruba).
+    
+    Args:
+        hostid: WLC host ID (str or int)
+        
+    Returns:
+        str: JSON with hostid, vendor, active_aps list (mac, ap_name, ap_ip, etc.) and count
+    """
+    try:
+        hid = helper.normalize_hostid(hostid)
+        if not hid:
+            return format_response({"error": "hostid required", "hostid": "", "active_aps": [], "count": 0})
+        result = await _get_active_aps_for_host(hostid=hid)
+        return format_response(result)
+    except Exception as e:
+        return format_response({"error": str(e), "hostid": "", "active_aps": [], "count": 0})
+
+
+@mcp.tool()
+async def get_active_ap_client_counts(
+    wlc_hostid: Optional[Union[str, int]] = None,
+    groupids: Optional[str] = None,
+) -> str:
+    """Get active APs with client counts for WLC hosts (all hosts or filtered).
+    
+    Args:
+        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
+        groupids: Optional comma-separated host group IDs to filter by
+        
+    Returns:
+        str: JSON with active_aps list (mac, ap_host, ap_name, ap_ip, client_count) and count
+    """
+    result = await _get_active_ap_client_counts(
+        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
+    )
+    return format_response(result)
+
+
+__all__ = ["main", "mcp"]
 
 
 if __name__ == "__main__":
