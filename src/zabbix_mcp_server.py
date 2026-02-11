@@ -1588,6 +1588,7 @@ def main():
 
 
 # WLC tools (Wireless LAN Controller / active APs)
+from . import helper  # noqa: E402
 from .wlc_tools import (  # noqa: E402
     get_active_wlc_hosts as _get_active_wlc_hosts,
     get_active_ap_client_counts as _get_active_ap_client_counts,
@@ -1602,73 +1603,97 @@ from .wlc_tools import (  # noqa: E402
 
 @mcp.tool()
 async def get_active_wlc_hosts(
-    wlc_hostid: Optional[str] = None,
+    wlc_hostid: Optional[Union[str, int]] = None,
     groupids: Optional[str] = None,
     data_age_seconds: Optional[int] = None,
 ) -> str:
     """Get active WLC hosts (with recent item data). Optional filter by hostid or groupids (comma-separated)."""
-    result = await _get_active_wlc_hosts(wlc_hostid=wlc_hostid, groupids=groupids, data_age_seconds=data_age_seconds)
+    result = await _get_active_wlc_hosts(
+        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids, data_age_seconds=data_age_seconds
+    )
     return format_response(result)
 
 
 @mcp.tool()
 async def get_host_item_errors(
-    wlc_hostid: Optional[str] = None,
+    wlc_hostid: Optional[Union[str, int]] = None,
     host_name: Optional[str] = None,
 ) -> str:
     """Get Zabbix items with errors for a WLC host (by hostid or host name)."""
-    result = await _get_host_item_errors(wlc_hostid=wlc_hostid, host_name=host_name)
+    result = await _get_host_item_errors(wlc_hostid=helper.normalize_hostid(wlc_hostid), host_name=host_name)
     return format_response(result)
 
 
 @mcp.tool()
 async def get_wlc_bsnAPOperationStatus_lastvalue(
-    wlc_hostid: Optional[str] = None,
+    wlc_hostid: Optional[Union[str, int]] = None,
     groupids: Optional[str] = None,
 ) -> str:
     """Get bsnAPOperationStatus item last values for active WLC hosts."""
-    result = await _get_wlc_bsnAPOperationStatus_lastvalue(wlc_hostid=wlc_hostid, groupids=groupids)
+    result = await _get_wlc_bsnAPOperationStatus_lastvalue(
+        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
+    )
     return format_response(result)
 
 
 @mcp.tool()
 async def get_ap_mac_inventory(
-    wlc_hostid: Optional[str] = None,
+    wlc_hostid: Optional[Union[str, int]] = None,
     groupids: Optional[str] = None,
 ) -> str:
     """Get AP MAC-to-host inventory for active WLC hosts."""
-    result = await _get_ap_mac_inventory(wlc_hostid=wlc_hostid, groupids=groupids)
+    result = await _get_ap_mac_inventory(wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids)
     return format_response(result)
 
 
 @mcp.tool()
-async def get_client_counts_for_ap_hosts(hostids: str) -> str:
-    """Get client counts per host for given hostids (comma-separated)."""
-    result = await _get_client_counts_for_ap_hosts(hostids=hostids)
-    return format_response(result)
+async def get_client_counts_for_ap_hosts(hostids: Optional[Union[List[str], str, int]] = None) -> str:
+    """Get client counts per host. hostids: list of host IDs (e.g. ["10782", "10783"]) or single id."""
+    try:
+        ids = helper.normalize_hostids(hostids)
+        if not ids:
+            return format_response({"error": "hostids required (list of host IDs)", "counts": {}})
+        result = await _get_client_counts_for_ap_hosts(hostids=ids)
+        return format_response(result)
+    except Exception as e:
+        return format_response({"error": str(e), "counts": {}})
 
 
 @mcp.tool()
-async def get_clients_per_ap(hostids: str) -> str:
-    """Get clients per AP for given hostids (comma-separated). Returns by_host breakdown."""
-    result = await _get_clients_per_ap(hostids=hostids)
-    return format_response(result)
+async def get_clients_per_ap(hostids: Optional[Union[List[str], str, int]] = None) -> str:
+    """Get clients per AP. hostids: list of host IDs (e.g. ["10782", "10783"]) or single id. Returns by_host breakdown."""
+    try:
+        ids = helper.normalize_hostids(hostids)
+        if not ids:
+            return format_response({"error": "hostids required (list of host IDs)", "by_host": {}, "hostids": []})
+        result = await _get_clients_per_ap(hostids=ids)
+        return format_response(result)
+    except Exception as e:
+        return format_response({"error": str(e), "by_host": {}, "hostids": []})
 
 
 @mcp.tool()
-async def get_active_aps_for_host(hostid: str) -> str:
-    """Get active APs for a single WLC host by hostid."""
-    result = await _get_active_aps_for_host(hostid=hostid)
-    return format_response(result)
+async def get_active_aps_for_host(hostid: Optional[Union[str, int]] = None) -> str:
+    """Get active APs for a single WLC host by hostid (str or int)."""
+    try:
+        hid = helper.normalize_hostid(hostid)
+        if not hid:
+            return format_response({"error": "hostid required", "hostid": "", "active_aps": [], "count": 0})
+        result = await _get_active_aps_for_host(hostid=hid)
+        return format_response(result)
+    except Exception as e:
+        return format_response({"error": str(e), "hostid": "", "active_aps": [], "count": 0})
 
 
 @mcp.tool()
 async def get_active_ap_client_counts(
-    wlc_hostid: Optional[str] = None,
+    wlc_hostid: Optional[Union[str, int]] = None,
     groupids: Optional[str] = None,
 ) -> str:
     """Get active APs with client counts for WLC hosts (optional filter by hostid or groupids)."""
-    result = await _get_active_ap_client_counts(wlc_hostid=wlc_hostid, groupids=groupids)
+    result = await _get_active_ap_client_counts(
+        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
+    )
     return format_response(result)
 
 

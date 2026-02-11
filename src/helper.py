@@ -79,6 +79,32 @@ def _ensure_list(obj: Any) -> List[Any]:
     return []
 
 
+def normalize_hostid(hostid: Any) -> Optional[str]:
+    """Normalize a single host id to string. Accepts str or int. Returns None if empty/null."""
+    if hostid is None:
+        return None
+    if isinstance(hostid, (int, float)):
+        return str(int(hostid))
+    s = str(hostid).strip()
+    if not s or s.lower() == "null":
+        return None
+    return s
+
+
+def normalize_hostids(hostids: Any) -> List[str]:
+    """Normalize hostids to list of strings. Accepts list, comma-separated str, or single str/int."""
+    if hostids is None:
+        return []
+    if isinstance(hostids, list):
+        return [str(x).strip() for x in hostids if str(x).strip() and str(x).strip().lower() != "null"]
+    if isinstance(hostids, (int, float)):
+        return [str(int(hostids))]
+    s = str(hostids).strip()
+    if not s or s.lower() == "null":
+        return []
+    return [h.strip() for h in s.split(",") if h.strip() and h.strip().lower() != "null"]
+
+
 def _index_from_key(key: str) -> str:
     if not key or "[" not in key or "]" not in key:
         return ""

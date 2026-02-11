@@ -7,7 +7,7 @@ Registered as MCP tools in zabbix_mcp_server; also importable from here (e.g. WL
 
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from . import helper
 
@@ -231,18 +231,15 @@ async def get_ap_mac_inventory(
         return {"error": str(e), "inventory": {}}
 
 
-async def get_client_counts_for_ap_hosts(hostids: str) -> dict:
+async def get_client_counts_for_ap_hosts(hostids: Union[List[str], str]) -> dict:
+    """Get client counts per host. hostids: list of host IDs or comma-separated string."""
     try:
         client = _get_zabbix_client()
     except Exception as e:
         return {"error": "Zabbix API not available", "counts": {}}
-    hostids_norm = _norm_opt_str(hostids)
-    if not hostids_norm:
-        return {"error": "hostids required (comma-separated)", "counts": {}}
-    ids = [h.strip() for h in hostids_norm.split(",") if h.strip()]
-    ids = [i for i in ids if i.lower() != "null"]
+    ids = helper.normalize_hostids(hostids)
     if not ids:
-        return {"error": "hostids required (comma-separated)", "counts": {}}
+        return {"error": "hostids required (list of host IDs)", "counts": {}}
     params = {"hostids": ids, "output": ["itemid", "hostid", "key_", "lastvalue"], "search": {"key_": "bsnApIfNoOfUsers"}}
     try:
         data = client.item.get(**params)
@@ -278,17 +275,11 @@ async def _get_clients_per_ap_impl(ids: List[str]) -> dict:
         return {"error": str(e), "by_host": by_host, "hostids": ids}
 
 
-async def get_clients_per_ap(hostids: str) -> dict:
-    if isinstance(hostids, list):
-        ids = [str(x).strip() for x in hostids if str(x).strip()]
-    else:
-        hostids_norm = _norm_opt_str(hostids)
-        if not hostids_norm:
-            return {"error": "hostids required (comma-separated)", "by_host": {}, "hostids": []}
-        ids = [h.strip() for h in hostids_norm.split(",") if h.strip()]
-    ids = [i for i in ids if (i or "").lower() != "null"]
+async def get_clients_per_ap(hostids: Union[List[str], str]) -> dict:
+    """Get clients per AP. hostids: list of host IDs or comma-separated string."""
+    ids = helper.normalize_hostids(hostids)
     if not ids:
-        return {"error": "hostids required (comma-separated)", "by_host": {}, "hostids": []}
+        return {"error": "hostids required (list of host IDs)", "by_host": {}, "hostids": []}
     return await _get_clients_per_ap_impl(ids)
 
 
