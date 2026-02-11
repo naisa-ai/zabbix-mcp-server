@@ -349,11 +349,13 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                 active_aps = aruba_active
                 if any(not e.get("ap_name") for e in active_aps):
                     ap_index_to_name = {}
-                    radio_result = client.item.get(hostids=[hid], output="extend", search={"key_": helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS})
+                    # Fetch all radio.* items (radio.type, radio.connectedClients, etc.) so we can
+                    # parse AP name from item names like: AP "MIMICArubaAP1769063543492" Radio "3": Type
+                    radio_result = client.item.get(hostids=[hid], output="extend", search={"key_": "radio."})
                     radio_items = _items_to_dict_list(radio_result)
                     for it in radio_items:
                         key = helper.get_item_key(it)
-                        if helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS not in key:
+                        if "radio." not in key:
                             continue
                         full_index = helper._index_from_key(key)
                         if not full_index:
