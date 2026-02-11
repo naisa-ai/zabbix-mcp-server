@@ -15,24 +15,23 @@ _WLC_ACTIVE_HOSTS_DEBUG = os.environ.get("WLC_ACTIVE_HOSTS_DEBUG", "").strip().l
 
 def oid_suffix_to_mac(index_suffix: str) -> str:
     """
-    Convert SNMP index suffix (last 5 decimal octets) to canonical MAC with 00: prefix.
+    Convert SNMP index suffix (6 decimal octets) to canonical MAC xx:xx:xx:xx:xx:xx.
 
-    Cisco WLC OID index often encodes MAC as decimal octets; first octet is 0 (00).
-    Example: "1.2.3.4.5" -> "00:01:02:03:04:05"
+    The OID suffix is the full 6 octets of the MAC encoded as decimal, dot-separated.
+    Example: "1.2.3.4.5.6" -> "01:02:03:04:05:06"
     """
     if not index_suffix or not index_suffix.strip():
         return ""
     parts = [p.strip() for p in index_suffix.strip().split(".")]
     try:
-        octets = [int(p) for p in parts[-5:] if p]
+        octets = [int(p) for p in parts[-6:] if p]
     except ValueError:
         return ""
-    if len(octets) < 5:
-        octets = [0] * (5 - len(octets)) + octets
+    if len(octets) < 6:
+        octets = [0] * (6 - len(octets)) + octets
     else:
-        octets = octets[-5:]
-    hex_parts = ["00"] + [f"{b:02x}" for b in octets]
-    return ":".join(hex_parts)
+        octets = octets[-6:]
+    return ":".join(f"{b:02x}" for b in octets)
 
 
 def normalize_snmp_hex_mac(raw: str) -> str:
