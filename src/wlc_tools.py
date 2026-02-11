@@ -349,19 +349,17 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                 active_aps = aruba_active
                 if any(not e.get("ap_name") for e in active_aps):
                     ap_index_to_name = {}
-                    # Fetch all radio.* items (radio.type, radio.connectedClients, etc.) so we can
-                    # parse AP name from item names like: AP "MIMICArubaAP1769063543492" Radio "3": Type
-                    radio_result = client.item.get(hostids=[hid], output="extend", search={"key_": "radio."})
+                    # Parse AP name from item names like: AP "MIMICArubaAP..." Radio "3": Connected Clients
+                    radio_result = client.item.get(hostids=[hid], output="extend", search={"key_": helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS})
                     radio_items = _items_to_dict_list(radio_result)
                     for it in radio_items:
                         key = helper.get_item_key(it)
-                        if "radio." not in key:
+                        if helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS not in key:
                             continue
                         full_index = helper._index_from_key(key)
                         if not full_index:
                             continue
-                        parts = full_index.rsplit(".", 1)
-                        ap_index = parts[0] if len(parts) == 2 and parts[1] in ("1", "2") else full_index
+                        ap_index = helper._normalize_aruba_ap_index_to_base(full_index)
                         ap_name = helper._parse_aruba_ap_name_from_item_name(it.get("name") or "")
                         if ap_name and ap_index not in ap_index_to_name:
                             ap_index_to_name[ap_index] = ap_name
@@ -383,7 +381,9 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                                 break
                     for entry in active_aps:
                         if not entry.get("ap_name"):
-                            entry["ap_name"] = ap_index_to_name.get(entry.get("ap_index", ""), "")
+                            idx = entry.get("ap_index", "")
+                            base_idx = helper._normalize_aruba_ap_index_to_base(idx)
+                            entry["ap_name"] = ap_index_to_name.get(idx, "") or ap_index_to_name.get(base_idx, "")
                 # Aruba: fill ap_ip from ap.ip[key] items (key index matches ap_index)
                 ip_result = client.item.get(hostids=[hid], output="extend", search={"key_": helper.KEY_ARUBA_AP_IP})
                 ip_items = _items_to_dict_list(ip_result)

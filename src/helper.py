@@ -115,6 +115,18 @@ def _index_from_key(key: str) -> str:
     return key[key.index("[") + 1 : key.rindex("]")].strip('"')
 
 
+def _normalize_aruba_ap_index_to_base(index: str) -> str:
+    """Normalize Aruba key index to base form by stripping a trailing radio segment.
+    ap.status uses base e.g. 172.163.30.1.0.16; radio.* keys use base.<radio> (e.g. .1, .2, .3).
+    We strip only when the last segment is a single digit to avoid stripping base parts like .16."""
+    if not index or not index.strip():
+        return index or ""
+    parts = index.rsplit(".", 1)
+    if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 1:
+        return parts[0]
+    return index
+
+
 def _looks_like_aruba_ap_name(index: str) -> bool:
     if not index or not index.strip():
         return False
@@ -333,8 +345,7 @@ def parse_aruba_radio_connected_clients(items_json: Any) -> Dict[tuple, int]:
         full_index = _index_from_key(key)
         if not full_index:
             continue
-        parts = full_index.rsplit(".", 1)
-        ap_index = parts[0] if len(parts) == 2 and parts[1] in ("1", "2") else full_index
+        ap_index = _normalize_aruba_ap_index_to_base(full_index)
         try:
             val = int(float(it.get("lastvalue") or 0))
         except (TypeError, ValueError):
