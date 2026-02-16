@@ -10,6 +10,23 @@ Author: Zabbix MCP Server Contributors
 License: MIT
 """
 
+# -----------------------------------------------------------------------------
+# FILE STRUCTURE
+# -----------------------------------------------------------------------------
+# 1. Package setup (when run as script)
+# 2. Imports and configuration (logging, FastMCP, env)
+# 3. Shared helpers (get_zabbix_client, format_response, validate_read_only)
+# 4. Hosts & groups    -> host_*, hostgroup_*
+# 5. Items             -> item_*, discover_itemids_for_hosts
+# 6. Triggers & templates -> trigger_*, template_*
+# 7. Problems & events   -> problem_*, event_*
+# 8. History, trends & timeseries -> history_get, trend_get, get_timeseries
+# 9. Users, proxies, maintenance -> user_*, proxy_*, maintenance_*
+# 10. Other (graphs, discovery rules, item prototypes, config, macros, system)
+# 11. Entry point (main)
+# 12. WLC tools (Wireless LAN Controller / active APs) -> get_active_wlc_hosts, get_host_item_errors, etc.
+# -----------------------------------------------------------------------------
+
 # When run as script (e.g. python src/zabbix_mcp_server.py), set up package for relative imports.
 # TODO: align with a consistent pythonpath/package convention across repos.
 if __package__ is None or __package__ == "":
@@ -27,6 +44,8 @@ from typing import Any, Dict, List, Optional, Union
 from fastmcp import FastMCP
 from zabbix_utils import ZabbixAPI
 from dotenv import load_dotenv
+
+from .timeseries_helper import group_history_into_series
 
 # Load environment variables from .env file
 load_dotenv()
@@ -141,7 +160,9 @@ def validate_read_only() -> None:
         raise ValueError("Server is in read-only mode - write operations are not allowed")
 
 
+# -----------------------------------------------------------------------------
 # HOST MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def host_get(hostids: Optional[List[str]] = None, 
              groupids: Optional[List[str]] = None,
@@ -268,7 +289,9 @@ def host_delete(hostids: List[str]) -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # HOST GROUP MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def hostgroup_get(groupids: Optional[List[str]] = None,
                   output: Union[str, List[str]] = "extend",
@@ -351,7 +374,9 @@ def hostgroup_delete(groupids: List[str]) -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # ITEM MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def item_get(itemids: Optional[List[str]] = None,
              hostids: Optional[List[str]] = None,
@@ -490,7 +515,61 @@ def item_delete(itemids: List[str]) -> str:
     return format_response(result)
 
 
+@mcp.tool()
+def discover_itemids_for_hosts(
+    hostids: List[str],
+    search_key: Optional[str] = None,
+    search_name: Optional[str] = None,
+    value_types: Optional[List[int]] = None,
+    limit: Optional[int] = 500,
+) -> str:
+    """Discover item IDs for given hosts, for use with get_timeseries.
+
+    Call this with hostids first; then pass the returned itemids to get_timeseries.
+    Optionally filter by key substring (e.g. 'ap.clients'), name substring, or value type.
+
+    Args:
+        hostids: List of Zabbix host IDs
+        search_key: Optional substring to match in item key (e.g. 'ap.clients', 'system.cpu')
+        search_name: Optional substring to match in item name
+        value_types: Optional list of value types to include (0=float, 1=char, 2=log, 3=unsigned, 4=text)
+        limit: Maximum number of items to return (default 500)
+
+    Returns:
+        str: JSON with "itemids" (list of IDs) and "items" (list of {itemid, key_, name, value_type})
+    """
+    client = get_zabbix_client()
+    params = {
+        "hostids": hostids,
+        "output": ["itemid", "key_", "name", "value_type"],
+        "limit": limit or 500,
+    }
+    search: Dict[str, str] = {}
+    if search_key:
+        search["key_"] = search_key
+    if search_name:
+        search["name"] = search_name
+    if search:
+        params["search"] = search
+    if value_types:
+        params["filter"] = {"value_type": value_types}
+
+    raw = client.item.get(**params)
+    items = []
+    for row in raw:
+        items.append({
+            "itemid": str(row.get("itemid", "")),
+            "key_": row.get("key_", row.get("key", "")),
+            "name": row.get("name", ""),
+            "value_type": row.get("value_type"),
+        })
+    itemids = [i["itemid"] for i in items]
+    return format_response({"itemids": itemids, "items": items})
+
+
+# -----------------------------------------------------------------------------
 # TRIGGER MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def trigger_get(triggerids: Optional[List[str]] = None,
                 hostids: Optional[List[str]] = None,
@@ -621,7 +700,9 @@ def trigger_delete(triggerids: List[str]) -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # TEMPLATE MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def template_get(templateids: Optional[List[str]] = None,
                  groupids: Optional[List[str]] = None,
@@ -738,7 +819,9 @@ def template_delete(templateids: List[str]) -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # PROBLEM MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def problem_get(eventids: Optional[List[str]] = None,
                 groupids: Optional[List[str]] = None,
@@ -793,7 +876,9 @@ def problem_get(eventids: Optional[List[str]] = None,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # EVENT MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def event_get(eventids: Optional[List[str]] = None,
               groupids: Optional[List[str]] = None,
@@ -868,7 +953,9 @@ def event_acknowledge(eventids: List[str], action: int = 1,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # HISTORY MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def history_get(itemids: List[str], history: int = 0,
                 time_from: Optional[int] = None,
@@ -909,7 +996,9 @@ def history_get(itemids: List[str], history: int = 0,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # TREND MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def trend_get(itemids: List[str], time_from: Optional[int] = None,
               time_till: Optional[int] = None,
@@ -939,7 +1028,60 @@ def trend_get(itemids: List[str], time_from: Optional[int] = None,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
+# TIMESERIES (normalized history as time series per item)
+# -----------------------------------------------------------------------------
+
+@mcp.tool()
+def get_timeseries(
+    itemids: List[str],
+    time_from: Optional[int] = None,
+    time_till: Optional[int] = None,
+    history: int = 0,
+    limit: Optional[int] = None,
+    sortorder: str = "DESC",
+    include_iso_timestamp: bool = False,
+) -> str:
+    """Get time series data for one or more Zabbix items (history as points over time).
+
+    Returns a normalized structure: one series per itemid, each with a list of
+    points (timestamp, value). Use for recent data; for long ranges (e.g. > 24h)
+    consider trend_get for aggregated min/max/avg per hour.
+
+    Args:
+        itemids: List of item IDs to get time series for
+        time_from: Start time (Unix timestamp, seconds)
+        time_till: End time (Unix timestamp, seconds)
+        history: History type (0=float, 1=character, 2=log, 3=unsigned, 4=text)
+        limit: Maximum number of points per item (default: server limit)
+        sortorder: Sort order for points: ASC (oldest first) or DESC (newest first)
+        include_iso_timestamp: If true, add "datetime_utc" (ISO 8601) to each point
+
+    Returns:
+        str: JSON with shape { "series": [ { "itemid": "...", "points": [ {"timestamp": int, "value": str}, ... ], "count": N }, ... ] }
+    """
+    client = get_zabbix_client()
+    params = {
+        "itemids": itemids,
+        "history": history,
+        "sortfield": "clock",
+        "sortorder": sortorder,
+    }
+    if time_from is not None:
+        params["time_from"] = time_from
+    if time_till is not None:
+        params["time_till"] = time_till
+    if limit is not None:
+        params["limit"] = limit
+
+    raw_history = client.history.get(**params)
+    series = group_history_into_series(raw_history, include_iso_timestamp)
+    return format_response({"series": series})
+
+
+# -----------------------------------------------------------------------------
 # USER MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def user_get(userids: Optional[List[str]] = None,
              output: Union[str, List[str]] = "extend",
@@ -1058,7 +1200,9 @@ def user_delete(userids: List[str]) -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # PROXY MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def proxy_get(proxyids: Optional[List[str]] = None,
               output: str = "extend",
@@ -1183,7 +1327,9 @@ def proxy_delete(proxyids: List[str]) -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # MAINTENANCE MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def maintenance_get(maintenanceids: Optional[List[str]] = None,
                     groupids: Optional[List[str]] = None,
@@ -1307,7 +1453,9 @@ def maintenance_delete(maintenanceids: List[str]) -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # GRAPH MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def graph_get(graphids: Optional[List[str]] = None,
               hostids: Optional[List[str]] = None,
@@ -1346,7 +1494,9 @@ def graph_get(graphids: Optional[List[str]] = None,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # DISCOVERY RULE MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def discoveryrule_get(itemids: Optional[List[str]] = None,
                       hostids: Optional[List[str]] = None,
@@ -1385,7 +1535,9 @@ def discoveryrule_get(itemids: Optional[List[str]] = None,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # ITEM PROTOTYPE MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def itemprototype_get(itemids: Optional[List[str]] = None,
                       discoveryids: Optional[List[str]] = None,
@@ -1424,7 +1576,9 @@ def itemprototype_get(itemids: Optional[List[str]] = None,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # CONFIGURATION EXPORT/IMPORT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def configuration_export(format: str = "json",
                          options: Optional[Dict[str, Any]] = None) -> str:
@@ -1473,7 +1627,9 @@ def configuration_import(format: str, source: str,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # MACRO MANAGEMENT
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def usermacro_get(globalmacroids: Optional[List[str]] = None,
                   hostids: Optional[List[str]] = None,
@@ -1508,7 +1664,9 @@ def usermacro_get(globalmacroids: Optional[List[str]] = None,
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
 # SYSTEM INFO
+# -----------------------------------------------------------------------------
 @mcp.tool()
 def apiinfo_version() -> str:
     """Get Zabbix API version information.
@@ -1521,6 +1679,9 @@ def apiinfo_version() -> str:
     return format_response(result)
 
 
+# -----------------------------------------------------------------------------
+# ENTRY POINT (transport config and main)
+# -----------------------------------------------------------------------------
 def get_transport_config() -> Dict[str, Any]:
     """Get transport configuration from environment variables.
     
@@ -1588,8 +1749,10 @@ def main():
         raise
 
 
-# WLC tools (Wireless LAN Controller / active APs)
-from . import helper  # noqa: E402
+# -----------------------------------------------------------------------------
+# WLC TOOLS (Wireless LAN Controller / active APs)
+# -----------------------------------------------------------------------------
+from . import wlc_helper  # noqa: E402
 from .wlc_tools import (  # noqa: E402
     get_active_wlc_hosts as _get_active_wlc_hosts,
     get_active_ap_client_counts as _get_active_ap_client_counts,
@@ -1617,7 +1780,7 @@ async def get_active_wlc_hosts(
         str: JSON with hosts list and count (hostid, host, name per host)
     """
     result = await _get_active_wlc_hosts(
-        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids, data_age_seconds=data_age_seconds
+        wlc_hostid=wlc_helper.normalize_hostid(wlc_hostid), groupids=groupids, data_age_seconds=data_age_seconds
     )
     return format_response(result)
 
@@ -1636,7 +1799,7 @@ async def get_host_item_errors(
     Returns:
         str: JSON with hostid, host, items_with_errors list (key_, name, state, error), count, total_items
     """
-    result = await _get_host_item_errors(wlc_hostid=helper.normalize_hostid(wlc_hostid), host_name=host_name)
+    result = await _get_host_item_errors(wlc_hostid=wlc_helper.normalize_hostid(wlc_hostid), host_name=host_name)
     return format_response(result)
 
 
@@ -1651,7 +1814,7 @@ async def get_client_counts_for_ap_hosts(hostids: Optional[Union[List[str], str,
         str: JSON with counts dict (hostid -> total client count)
     """
     try:
-        ids = helper.normalize_hostids(hostids)
+        ids = wlc_helper.normalize_hostids(hostids)
         if not ids:
             return format_response({"error": "hostids required (list of host IDs)", "counts": {}})
         result = await _get_client_counts_for_ap_hosts(hostids=ids)
@@ -1671,7 +1834,7 @@ async def get_clients_per_ap(hostids: Optional[Union[List[str], str, int]] = Non
         str: JSON with by_host dict (hostid -> list of {ap, client_count}) and hostids list
     """
     try:
-        ids = helper.normalize_hostids(hostids)
+        ids = wlc_helper.normalize_hostids(hostids)
         if not ids:
             return format_response({"error": "hostids required (list of host IDs)", "by_host": {}, "hostids": []})
         result = await _get_clients_per_ap(hostids=ids)
@@ -1691,7 +1854,7 @@ async def get_active_aps_for_host(hostid: Optional[Union[str, int]] = None) -> s
         str: JSON with hostid, vendor, active_aps list (mac, ap_name, ap_ip, etc.) and count
     """
     try:
-        hid = helper.normalize_hostid(hostid)
+        hid = wlc_helper.normalize_hostid(hostid)
         if not hid:
             return format_response({"error": "hostid required", "hostid": "", "active_aps": [], "count": 0})
         result = await _get_active_aps_for_host(hostid=hid)
@@ -1715,7 +1878,7 @@ async def get_active_ap_client_counts(
         str: JSON with active_aps list (mac, ap_host, ap_name, ap_ip, client_count) and count
     """
     result = await _get_active_ap_client_counts(
-        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
+        wlc_hostid=wlc_helper.normalize_hostid(wlc_hostid), groupids=groupids
     )
     return format_response(result)
 

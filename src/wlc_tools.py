@@ -12,7 +12,7 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Union
 
-from . import helper
+from . import wlc_helper
 
 
 def _get_zabbix_client():
@@ -37,7 +37,7 @@ def _api_result_to_list(raw: Any) -> List[Any]:
 
 
 def _debug(msg: str) -> None:
-    if helper.get_wlc_active_hosts_debug():
+    if wlc_helper.get_wlc_active_hosts_debug():
         print(f"[_fetch_active_wlc_hosts] {msg}", file=sys.stderr)
 
 
@@ -85,16 +85,16 @@ async def _fetch_active_wlc_hosts(
     _debug(f"params_host: {params_host}")
     hosts_raw = client.host.get(**params_host)
     hosts = _api_result_to_list(hosts_raw)
-    hosts = helper.filter_active_available_wlc_hosts(hosts)
+    hosts = wlc_helper.filter_active_available_wlc_hosts(hosts)
     _debug(f"after filter_active_available_wlc_hosts: len={len(hosts)}")
     if not hosts:
         _debug("early return: no hosts after filter")
         return ([], {})
     hostids = [h.get("hostid") for h in hosts if h.get("hostid")]
-    params_items = {"hostids": hostids, "output": "extend", "limit": helper.MAX_ITEMS_FETCH}
+    params_items = {"hostids": hostids, "output": "extend", "limit": wlc_helper.MAX_ITEMS_FETCH}
     items_raw = client.item.get(**params_items)
     items_data = items_raw
-    hostids_with_data = helper.get_hostids_with_current_data(items_data, max_age_seconds=data_age_seconds)
+    hostids_with_data = wlc_helper.get_hostids_with_current_data(items_data, max_age_seconds=data_age_seconds)
     _debug(f"hostids_with_data: len={len(hostids_with_data)}")
     hosts = [h for h in hosts if str(h.get("hostid", "")) in hostids_with_data]
     _debug(f"after filter by hostids_with_data: len(hosts)={len(hosts)}")
@@ -148,14 +148,14 @@ async def get_host_item_errors(
             host_display = hosts[0].get("host") or hosts[0].get("name") or hostid
         if not hostid:
             return {"error": "Pass wlc_hostid or host_name", "items_with_errors": [], "count": 0, "total_items": 0}
-        params_item = {"hostids": [hostid], "output": "extend", "limit": helper.MAX_ITEMS_FETCH}
+        params_item = {"hostids": [hostid], "output": "extend", "limit": wlc_helper.MAX_ITEMS_FETCH}
         items_raw = client.item.get(**params_item)
         items_data = items_raw
         items_all = _api_result_to_list(items_data)
-        with_errors = helper.filter_items_with_errors(items_data)
+        with_errors = wlc_helper.filter_items_with_errors(items_data)
         out = [
-            {"key_": helper.get_item_key(it), "name": (it.get("name") or "")[:80], "state": it.get("state", ""), "error": (it.get("error") or "").strip()}
-            for it in with_errors[: helper.MAX_ITEMS_WITH_ERRORS_RETURNED]
+            {"key_": wlc_helper.get_item_key(it), "name": (it.get("name") or "")[:80], "state": it.get("state", ""), "error": (it.get("error") or "").strip()}
+            for it in with_errors[: wlc_helper.MAX_ITEMS_WITH_ERRORS_RETURNED]
         ]
         total_with_errors = len(with_errors)
         return {
@@ -165,8 +165,8 @@ async def get_host_item_errors(
             "items_with_errors": out,
             "count": total_with_errors,
             "total_items": len(items_all),
-            "truncated": total_with_errors > helper.MAX_ITEMS_WITH_ERRORS_RETURNED,
-            "truncated_note": f"(showing first {helper.MAX_ITEMS_WITH_ERRORS_RETURNED} of {total_with_errors} items with errors)" if total_with_errors > helper.MAX_ITEMS_WITH_ERRORS_RETURNED else None,
+            "truncated": total_with_errors > wlc_helper.MAX_ITEMS_WITH_ERRORS_RETURNED,
+            "truncated_note": f"(showing first {wlc_helper.MAX_ITEMS_WITH_ERRORS_RETURNED} of {total_with_errors} items with errors)" if total_with_errors > wlc_helper.MAX_ITEMS_WITH_ERRORS_RETURNED else None,
         }
     except Exception as e:
         return {"error": str(e), "items_with_errors": [], "count": 0, "total_items": 0}
@@ -189,12 +189,12 @@ async def get_cisco_wlc_bsnAPOperationStatus_lastvalue(
             return {"items": [], "count": 0}
         hostids = [h.get("hostid") for h in hosts if h.get("hostid")]
         client = _get_zabbix_client()
-        params = {"output": ["itemid", "hostid", "name", "key_", "lastvalue", "lastclock"], "search": {"key_": helper.KEY_BSN_AP_OPERATION_STATUS}, "hostids": hostids}
+        params = {"output": ["itemid", "hostid", "name", "key_", "lastvalue", "lastclock"], "search": {"key_": wlc_helper.KEY_BSN_AP_OPERATION_STATUS}, "hostids": hostids}
         data = client.item.get(**params)
-        items = helper.parse_wlc_bsnAPOperationStatus_lastvalue(data)
+        items = wlc_helper.parse_wlc_bsnAPOperationStatus_lastvalue(data)
         # Cisco WLC uses a single bulk item (key_ exactly bsnAPOperationStatus) with multi-line lastvalue; parse it when per-AP items are empty
         if not items:
-            items = helper.parse_cisco_bsnAPOperationStatus_bulk(data)
+            items = wlc_helper.parse_cisco_bsnAPOperationStatus_bulk(data)
         return {"items": items, "count": len(items)}
     except Exception as e:
         return {"error": str(e), "items": []}
@@ -223,12 +223,12 @@ async def get_cisco_wlc_ap_mac_inventory(
         ip_result = client.item.get(output="extend", search={"key_": "bsnApIpAddress"}, hostids=hostids)
         mac_items = _items_to_dict_list(mac_result)
         ip_items = _items_to_dict_list(ip_result)
-        inventory = helper.build_cisco_ap_name_inventory(mac_items, ip_items, hostid_to_host)
+        inventory = wlc_helper.build_cisco_ap_name_inventory(mac_items, ip_items, hostid_to_host)
         # Fallback: bsnAPName / bsnAPIP (e.g. legacy or other vendors) when Cisco-style inventory is empty
         if not inventory:
             name_result = client.item.get(output=["itemid", "hostid", "name", "key_", "lastvalue"], search={"key_": "bsnAPName"}, hostids=hostids)
             ip_result_legacy = client.item.get(output=["itemid", "hostid", "name", "key_", "lastvalue"], search={"key_": "bsnAPIP"}, hostids=hostids)
-            inventory = helper.build_ap_inventory_mac_to_host(hosts, name_result, ip_result_legacy, mac_from_key_index=True)
+            inventory = wlc_helper.build_ap_inventory_mac_to_host(hosts, name_result, ip_result_legacy, mac_from_key_index=True)
         return {"inventory": inventory, "count": len(inventory)}
     except Exception as e:
         return {"error": str(e), "inventory": {}}
@@ -240,13 +240,13 @@ async def get_client_counts_for_ap_hosts(hostids: Union[List[str], str]) -> dict
         client = _get_zabbix_client()
     except Exception as e:
         return {"error": "Zabbix API not available", "counts": {}}
-    ids = helper.normalize_hostids(hostids)
+    ids = wlc_helper.normalize_hostids(hostids)
     if not ids:
         return {"error": "hostids required (list of host IDs)", "counts": {}}
     params = {"hostids": ids, "output": ["itemid", "hostid", "key_", "lastvalue"], "search": {"key_": "bsnApIfNoOfUsers"}}
     try:
         data = client.item.get(**params)
-        counts = helper.parse_client_counts_for_hosts(data)
+        counts = wlc_helper.parse_client_counts_for_hosts(data)
         return {"counts": counts}
     except Exception as e:
         return {"error": str(e), "counts": {}}
@@ -259,14 +259,14 @@ async def _get_clients_per_ap_impl(ids: List[str]) -> dict:
     except Exception as e:
         return {"error": "Zabbix API not available", "by_host": by_host, "hostids": ids}
     try:
-        params_cisco = {"hostids": ids, "output": "extend", "search": {"key_": helper.KEY_BSN_AP_IF_NO_OF_USERS_PREFIX}}
+        params_cisco = {"hostids": ids, "output": "extend", "search": {"key_": wlc_helper.KEY_BSN_AP_IF_NO_OF_USERS_PREFIX}}
         cisco_result = client.item.get(**params_cisco)
         cisco_data = _items_to_dict_list(cisco_result)
-        cisco_by_ap = helper.parse_cisco_client_count_by_ap_name(cisco_data)
-        params_aruba = {"hostids": ids, "output": "extend", "search": {"key_": helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS}}
+        cisco_by_ap = wlc_helper.parse_cisco_client_count_by_ap_name(cisco_data)
+        params_aruba = {"hostids": ids, "output": "extend", "search": {"key_": wlc_helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS}}
         aruba_result = client.item.get(**params_aruba)
         aruba_data = _items_to_dict_list(aruba_result)
-        aruba_by_ap = helper.parse_aruba_radio_connected_clients(aruba_data)
+        aruba_by_ap = wlc_helper.parse_aruba_radio_connected_clients(aruba_data)
         for (hostid, ap_key), count in cisco_by_ap.items():
             if hostid in by_host:
                 by_host[hostid].append({"ap": ap_key, "client_count": count})
@@ -280,7 +280,7 @@ async def _get_clients_per_ap_impl(ids: List[str]) -> dict:
 
 async def get_clients_per_ap(hostids: Union[List[str], str]) -> dict:
     """Get clients per AP. hostids: list of host IDs or comma-separated string."""
-    ids = helper.normalize_hostids(hostids)
+    ids = wlc_helper.normalize_hostids(hostids)
     if not ids:
         return {"error": "hostids required (list of host IDs)", "by_host": {}, "hostids": []}
     return await _get_clients_per_ap_impl(ids)
@@ -295,14 +295,14 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
         params_host = {"output": "extend", "hostids": [hid], "filter": {"status": 0}}
         hosts_raw = client.host.get(**params_host)
         hosts = _api_result_to_list(hosts_raw)
-        hosts = [h for h in helper._ensure_list(hosts) if isinstance(h, dict)]
+        hosts = [h for h in wlc_helper._ensure_list(hosts) if isinstance(h, dict)]
         host = hosts[0] if hosts else {}
-        vendor = helper._host_vendor(host)
-        params_cisco = {"hostids": [hid], "output": "extend", "search": {"key_": helper.KEY_BSN_AP_OPERATION_STATUS}}
+        vendor = wlc_helper._host_vendor(host)
+        params_cisco = {"hostids": [hid], "output": "extend", "search": {"key_": wlc_helper.KEY_BSN_AP_OPERATION_STATUS}}
         status_result = client.item.get(**params_cisco)
         status_data = _items_to_dict_list(status_result)
-        bulk_status = helper.parse_cisco_bsnAPOperationStatus_bulk(status_data)
-        status_items = helper.parse_wlc_bsnAPOperationStatus_lastvalue(status_data) if not bulk_status else []
+        bulk_status = wlc_helper.parse_cisco_bsnAPOperationStatus_bulk(status_data)
+        status_items = wlc_helper.parse_wlc_bsnAPOperationStatus_lastvalue(status_data) if not bulk_status else []
         active_aps: List[Dict[str, Any]] = []
         if bulk_status or status_items:
             vendor = vendor or "cisco"
@@ -312,37 +312,37 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                     if str(it.get("lastvalue")) != "1":
                         continue
                     idx = it.get("index_suffix", "")
-                    mac = helper.oid_suffix_to_mac(idx)
+                    mac = wlc_helper.oid_suffix_to_mac(idx)
                     active_aps.append({"index_suffix": idx, "mac": mac or "", "ap_name": "", "ap_ip": ""})
             else:
                 for it in status_items:
                     if str(it.get("lastvalue")) != "1":
                         continue
                     idx = it.get("index_suffix", "")
-                    mac = helper.oid_suffix_to_mac(idx)
+                    mac = wlc_helper.oid_suffix_to_mac(idx)
                     active_aps.append({"index_suffix": idx, "mac": mac or "", "ap_name": "", "ap_ip": ""})
             if active_aps:
                 mac_result = client.item.get(hostids=[hid], output="extend", search={"key_": "bsnAPDot3MacAddress"})
                 ip_result = client.item.get(hostids=[hid], output="extend", search={"key_": "bsnApIpAddress"})
                 mac_items = _items_to_dict_list(mac_result)
                 ip_items = _items_to_dict_list(ip_result)
-                mac_to_ap = helper.build_cisco_ap_name_inventory(mac_items, ip_items, hostid_to_host)
+                mac_to_ap = wlc_helper.build_cisco_ap_name_inventory(mac_items, ip_items, hostid_to_host)
                 for entry in active_aps:
                     info = mac_to_ap.get(entry.get("mac") or "")
                     if info:
                         entry["ap_name"] = info.get("ap_name", "")
                         entry["ap_ip"] = info.get("ap_ip", "")
         if not active_aps or vendor == "aruba":
-            params_aruba = {"hostids": [hid], "output": "extend", "search": {"key_": helper.KEY_ARUBA_AP_STATUS}}
+            params_aruba = {"hostids": [hid], "output": "extend", "search": {"key_": wlc_helper.KEY_ARUBA_AP_STATUS}}
             aruba_result = client.item.get(**params_aruba)
             ap_status_data = _items_to_dict_list(aruba_result)
-            ap_status_items = helper.parse_aruba_ap_status(ap_status_data)
+            ap_status_items = wlc_helper.parse_aruba_ap_status(ap_status_data)
             aruba_active = []
             for it in ap_status_items:
                 if (it.get("lastvalue") or "").strip().lower() not in ("1", "up"):
                     continue
                 ap_index = it.get("ap_index", "")
-                ap_name = ap_index if helper._looks_like_aruba_ap_name(ap_index) else ""
+                ap_name = ap_index if wlc_helper._looks_like_aruba_ap_name(ap_index) else ""
                 aruba_active.append({"ap_index": ap_index, "ap_name": ap_name, "ap_ip": ""})
             if aruba_active:
                 vendor = "aruba"
@@ -350,28 +350,28 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                 if any(not e.get("ap_name") for e in active_aps):
                     ap_index_to_name = {}
                     # Parse AP name from item names like: AP "MIMICArubaAP..." Radio "3": Connected Clients
-                    radio_result = client.item.get(hostids=[hid], output="extend", search={"key_": helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS})
+                    radio_result = client.item.get(hostids=[hid], output="extend", search={"key_": wlc_helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS})
                     radio_items = _items_to_dict_list(radio_result)
                     for it in radio_items:
-                        key = helper.get_item_key(it)
-                        if helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS not in key:
+                        key = wlc_helper.get_item_key(it)
+                        if wlc_helper.KEY_ARUBA_RADIO_CONNECTED_CLIENTS not in key:
                             continue
-                        full_index = helper._index_from_key(key)
+                        full_index = wlc_helper._index_from_key(key)
                         if not full_index:
                             continue
-                        ap_index = helper._normalize_aruba_ap_index_to_base(full_index)
-                        ap_name = helper._parse_aruba_ap_name_from_item_name(it.get("name") or "")
+                        ap_index = wlc_helper._normalize_aruba_ap_index_to_base(full_index)
+                        ap_name = wlc_helper._parse_aruba_ap_name_from_item_name(it.get("name") or "")
                         if ap_name and ap_index not in ap_index_to_name:
                             ap_index_to_name[ap_index] = ap_name
                     if not ap_index_to_name:
-                        for key_pattern in (helper.KEY_ARUBA_AP_NAME, "ap.hostname"):
+                        for key_pattern in (wlc_helper.KEY_ARUBA_AP_NAME, "ap.hostname"):
                             name_result = client.item.get(hostids=[hid], output="extend", search={"key_": key_pattern})
                             name_items = _items_to_dict_list(name_result)
                             for it in name_items:
-                                key = helper.get_item_key(it)
+                                key = wlc_helper.get_item_key(it)
                                 if key_pattern not in key:
                                     continue
-                                ap_index = helper._index_from_key(key)
+                                ap_index = wlc_helper._index_from_key(key)
                                 if not ap_index:
                                     continue
                                 ap_name = (it.get("lastvalue") or "").strip()
@@ -382,17 +382,17 @@ async def _get_active_aps_for_host_impl(hid: str) -> dict:
                     for entry in active_aps:
                         if not entry.get("ap_name"):
                             idx = entry.get("ap_index", "")
-                            base_idx = helper._normalize_aruba_ap_index_to_base(idx)
+                            base_idx = wlc_helper._normalize_aruba_ap_index_to_base(idx)
                             entry["ap_name"] = ap_index_to_name.get(idx, "") or ap_index_to_name.get(base_idx, "")
                 # Aruba: fill ap_ip from ap.ip[key] items (key index matches ap_index)
-                ip_result = client.item.get(hostids=[hid], output="extend", search={"key_": helper.KEY_ARUBA_AP_IP})
+                ip_result = client.item.get(hostids=[hid], output="extend", search={"key_": wlc_helper.KEY_ARUBA_AP_IP})
                 ip_items = _items_to_dict_list(ip_result)
                 ap_index_to_ip = {}
                 for it in ip_items:
-                    key = helper.get_item_key(it)
-                    if helper.KEY_ARUBA_AP_IP not in key:
+                    key = wlc_helper.get_item_key(it)
+                    if wlc_helper.KEY_ARUBA_AP_IP not in key:
                         continue
-                    ap_index = helper._index_from_key(key)
+                    ap_index = wlc_helper._index_from_key(key)
                     if not ap_index:
                         continue
                     ap_index_to_ip[ap_index] = (it.get("lastvalue") or "").strip()
