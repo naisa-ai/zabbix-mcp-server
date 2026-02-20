@@ -10,6 +10,23 @@ Author: Zabbix MCP Server Contributors
 License: MIT
 """
 
+# -----------------------------------------------------------------------------
+# FILE STRUCTURE
+# -----------------------------------------------------------------------------
+# 1. Package setup (when run as script)
+# 2. Imports and configuration (logging, FastMCP, env)
+# 3. Shared helpers (get_zabbix_client, format_response, validate_read_only)
+# 4. Hosts, host interfaces & groups -> host_*, hostinterface_get, hostgroup_*
+# 5. Items             -> item_*, discover_itemids_for_hosts
+# 6. Triggers & templates -> trigger_*, template_*
+# 7. Problems & events   -> problem_*, event_*
+# 8. History, trends & timeseries -> history_get, trend_get, get_timeseries
+# 9. Users, proxies, maintenance -> user_*, proxy_*, maintenance_*
+# 10. Other (graphs, discovery rules, item prototypes, config, macros, system)
+# 11. Entry point (main)
+# 12. WLC tools (Wireless LAN Controller / active APs) -> get_active_wlc_hosts, get_host_item_errors, etc.
+# -----------------------------------------------------------------------------
+
 # When run as script (e.g. python src/zabbix_mcp_server.py), set up package for relative imports.
 # TODO: align with a consistent pythonpath/package convention across repos.
 if __package__ is None or __package__ == "":
@@ -268,6 +285,43 @@ def host_delete(hostids: List[str]) -> str:
     return format_response(result)
 
 
+@mcp.tool()
+def hostinterface_get(
+    hostids: Optional[List[str]] = None,
+    interfaceids: Optional[List[str]] = None,
+    output: Union[str, List[str]] = "extend",
+    search: Optional[Dict[str, str]] = None,
+    filter: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Get host interfaces from Zabbix (Zabbix API hostinterface.get).
+    
+    Args:
+        hostids: List of host IDs to get interfaces for
+        interfaceids: List of interface IDs to retrieve
+        output: Output format (extend or list of specific fields)
+        search: Search criteria
+        filter: Filter criteria
+        
+    Returns:
+        str: JSON formatted list of host interfaces
+    """
+    client = get_zabbix_client()
+    params: Dict[str, Any] = {"output": output}
+    
+    if hostids:
+        params["hostids"] = hostids
+    if interfaceids:
+        params["interfaceids"] = interfaceids
+    if search:
+        params["search"] = search
+    if filter:
+        params["filter"] = filter
+    
+    result = client.hostinterface.get(**params)
+    return format_response(result)
+
+
+# -----------------------------------------------------------------------------
 # HOST GROUP MANAGEMENT
 @mcp.tool()
 def hostgroup_get(groupids: Optional[List[str]] = None,
