@@ -167,7 +167,9 @@ def host_get(hostids: Optional[List[str]] = None,
              search: Optional[Dict[str, str]] = None,
              filter: Optional[Dict[str, Any]] = None,
              limit: Optional[int] = None,
-             select_parent_templates: Optional[List[str]] = None) -> str:
+             select_parent_templates: Optional[List[str]] = None,
+             select_inventory: Optional[List[str]] = None,
+             select_tags: Optional[List[str]] = None) -> str:
     """Get hosts from Zabbix with optional filtering.
     
     Args:
@@ -179,6 +181,8 @@ def host_get(hostids: Optional[List[str]] = None,
         filter: Filter criteria
         limit: Maximum number of results
         select_parent_templates: Return parentTemplates for each host (e.g. ["templateid", "name"])
+        select_inventory: Return host inventory (e.g. ["vendor", "type", "model"]) for vendor/device info
+        select_tags: Return host tags (e.g. ["tag", "value"]) for flexible metadata like vendor/manufacturer
         
     Returns:
         str: JSON formatted list of hosts
@@ -200,6 +204,10 @@ def host_get(hostids: Optional[List[str]] = None,
         params["limit"] = limit
     if select_parent_templates is not None:
         params["selectParentTemplates"] = select_parent_templates
+    if select_inventory is not None:
+        params["selectInventory"] = select_inventory
+    if select_tags is not None:
+        params["selectTags"] = select_tags
     
     result = client.host.get(**params)
     return format_response(result)
