@@ -166,7 +166,8 @@ def host_get(hostids: Optional[List[str]] = None,
              output: Union[str, List[str]] = "extend",
              search: Optional[Dict[str, str]] = None,
              filter: Optional[Dict[str, Any]] = None,
-             limit: Optional[int] = None) -> str:
+             limit: Optional[int] = None,
+             select_parent_templates: Optional[List[str]] = None) -> str:
     """Get hosts from Zabbix with optional filtering.
     
     Args:
@@ -177,6 +178,7 @@ def host_get(hostids: Optional[List[str]] = None,
         search: Search criteria
         filter: Filter criteria
         limit: Maximum number of results
+        select_parent_templates: Return parentTemplates for each host (e.g. ["templateid", "name"])
         
     Returns:
         str: JSON formatted list of hosts
@@ -196,6 +198,8 @@ def host_get(hostids: Optional[List[str]] = None,
         params["filter"] = filter
     if limit:
         params["limit"] = limit
+    if select_parent_templates is not None:
+        params["selectParentTemplates"] = select_parent_templates
     
     result = client.host.get(**params)
     return format_response(result)
