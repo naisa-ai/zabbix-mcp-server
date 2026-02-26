@@ -941,7 +941,8 @@ def history_get(itemids: List[str], history: int = 0,
                 time_till: Optional[int] = None,
                 limit: Optional[int] = None,
                 sortfield: str = "clock",
-                sortorder: str = "DESC") -> str:
+                sortorder: str = "DESC",
+                output: Union[str, List[str]] = "extend") -> str:
     """Get history data from Zabbix.
     
     Args:
@@ -952,6 +953,7 @@ def history_get(itemids: List[str], history: int = 0,
         limit: Maximum number of results
         sortfield: Field to sort by
         sortorder: Sort order (ASC or DESC)
+        output: Fields to return ("extend" for all, or list of field names)
         
     Returns:
         str: JSON formatted history data
@@ -961,7 +963,8 @@ def history_get(itemids: List[str], history: int = 0,
         "itemids": itemids,
         "history": history,
         "sortfield": sortfield,
-        "sortorder": sortorder
+        "sortorder": sortorder,
+        "output": output
     }
     
     if time_from:
@@ -979,7 +982,8 @@ def history_get(itemids: List[str], history: int = 0,
 @mcp.tool()
 def trend_get(itemids: List[str], time_from: Optional[int] = None,
               time_till: Optional[int] = None,
-              limit: Optional[int] = None) -> str:
+              limit: Optional[int] = None,
+              output: Union[str, List[str]] = "extend") -> str:
     """Get trend data from Zabbix.
     
     Args:
@@ -987,12 +991,13 @@ def trend_get(itemids: List[str], time_from: Optional[int] = None,
         time_from: Start time (Unix timestamp)
         time_till: End time (Unix timestamp)
         limit: Maximum number of results
+        output: Fields to return ("extend" for all, or list of field names)
         
     Returns:
         str: JSON formatted trend data
     """
     client = get_zabbix_client()
-    params = {"itemids": itemids}
+    params = {"itemids": itemids, "output": output}
     
     if time_from:
         params["time_from"] = time_from
