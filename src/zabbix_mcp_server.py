@@ -465,6 +465,190 @@ def item_get(itemids: Optional[List[str]] = None,
 
 
 @mcp.tool()
+def item_summarize(
+    hostids: Optional[List[str]] = None,
+    groupids: Optional[List[str]] = None,
+    templateids: Optional[List[str]] = None,
+    search: Optional[Dict[str, str]] = None,
+    filter: Optional[Dict[str, Any]] = None,
+    output: Union[str, List[str]] = "extend",
+    sort_by_lastvalue: Optional[str] = None,
+    top_n: Optional[int] = None,
+    value_filter_op: Optional[str] = None,
+    value_filter_threshold: Optional[float] = None,
+    group_by_key_base: bool = False,
+    count_only: bool = False,
+) -> str:
+    """Fetch items with server-side numeric sort, filter, and aggregation.
+
+    Wraps item.get then applies post-processing IN the server so the caller
+    receives a compact result instead of thousands of raw items.  Designed for
+    large-scale queries (1 000+ APs) where returning all items would exceed the
+    LLM context window.
+
+    Args:
+        hostids: List of host IDs to filter by
+        groupids: List of host group IDs to filter by
+        templateids: List of template IDs to filter by
+        search: Search criteria (e.g. {"key_": "radio.utilization"})
+        filter: Exact-match filter criteria
+        output: Fields to fetch from Zabbix (default "extend")
+        sort_by_lastvalue: "asc" or "desc" — numeric sort on lastvalue
+        top_n: After sorting, return only the first N items (default: all)
+        value_filter_op: Comparison operator applied to lastvalue
+            ("<", "<=", ">", ">=", "==", "!=")
+        value_filter_threshold: Numeric threshold for value_filter_op
+        group_by_key_base: If true, group items by base key index
+            (strip trailing single-digit radio suffix like .1/.2),
+            sum numeric lastvalues per group, and treat each group as one row
+        count_only: If true, return only counts (total, per-host,
+            per-key-suffix) without individual items
+
+    Returns:
+        str: JSON object with keys:
+            total_items — number of raw items fetched
+            stats — {min, max, avg} of numeric lastvalues
+            items — list of (top_n) items after sort/filter/group
+            filtered_count — items matching value_filter (when filter set)
+            distinct_groups — unique base-key groups (when group_by_key_base)
+            counts_by_host — {hostid: count} (when count_only)
+    """
+    client = get_zabbix_client()
+    params: Dict[str, Any] = {"output": output}
+    if hostids:
+        params["hostids"] = hostids
+    if groupids:
+        params["groupids"] = groupids
+    if templateids:
+        params["templateids"] = templateids
+    if search:
+        params["search"] = search
+    if filter:
+        params["filter"] = filter
+
+    raw_items = client.item.get(**params)
+    if not isinstance(raw_items, list):
+        raw_items = [raw_items] if raw_items else []
+
+    total_items = len(raw_items)
+
+    # --- helpers -----------------------------------------------------------
+    def _safe_float(val: Any) -> Optional[float]:
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    def _key_base(item: Dict[str, Any]) -> str:
+        key = (item.get("key_") or item.get("key")) or ""
+        idx = ""
+        if "[" in key and "]" in key:
+            idx = key[key.index("[") + 1 : key.rindex("]")].strip('"')
+        if not idx:
+            return key
+        parts = idx.rsplit(".", 1)
+        if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 1:
+            return parts[0]
+        return idx
+
+    # --- group by key base -------------------------------------------------
+    if group_by_key_base:
+        from collections import defaultdict
+        groups: Dict[str, Dict[str, Any]] = {}
+        group_items: Dict[str, list] = defaultdict(list)
+        for it in raw_items:
+            base = _key_base(it)
+            group_items[base].append(it)
+        for base, items_in_group in group_items.items():
+            total = 0.0
+            representative = items_in_group[0].copy()
+            hostid = representative.get("hostid", "")
+            item_ids = []
+            for it in items_in_group:
+                v = _safe_float(it.get("lastvalue"))
+                if v is not None:
+                    total += v
+                item_ids.append(it.get("itemid", ""))
+            representative["lastvalue"] = str(total)
+            representative["_group_base"] = base
+            representative["_group_itemids"] = item_ids
+            representative["_group_size"] = len(items_in_group)
+            groups[base] = representative
+        raw_items = list(groups.values())
+
+    # --- value filter ------------------------------------------------------
+    _OPS = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
+            ">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
+            "==": lambda a, b: a == b, "!=": lambda a, b: a != b}
+    filtered = raw_items
+    filtered_count = None
+    if value_filter_op and value_filter_threshold is not None:
+        op_fn = _OPS.get(value_filter_op)
+        if op_fn:
+            filtered = [
+                it for it in raw_items
+                if (v := _safe_float(it.get("lastvalue"))) is not None
+                and op_fn(v, value_filter_threshold)
+            ]
+            filtered_count = len(filtered)
+    else:
+        filtered = raw_items
+
+    # --- sort by lastvalue -------------------------------------------------
+    if sort_by_lastvalue in ("asc", "desc"):
+        filtered.sort(
+            key=lambda it: _safe_float(it.get("lastvalue")) or 0.0,
+            reverse=(sort_by_lastvalue == "desc"),
+        )
+
+    # --- top_n -------------------------------------------------------------
+    if top_n is not None and top_n > 0:
+        filtered = filtered[:top_n]
+
+    # --- stats -------------------------------------------------------------
+    numeric_vals = [
+        v for it in raw_items
+        if (v := _safe_float(it.get("lastvalue"))) is not None
+    ]
+    stats: Dict[str, Any] = {}
+    if numeric_vals:
+        stats = {
+            "min": round(min(numeric_vals), 4),
+            "max": round(max(numeric_vals), 4),
+            "avg": round(sum(numeric_vals) / len(numeric_vals), 4),
+        }
+
+    # --- count_only mode ---------------------------------------------------
+    if count_only:
+        from collections import Counter
+        host_counts = Counter(it.get("hostid", "") for it in raw_items)
+        result = {
+            "total_items": total_items,
+            "stats": stats,
+            "counts_by_host": dict(host_counts),
+        }
+        if group_by_key_base:
+            result["distinct_groups"] = len(raw_items)
+        if filtered_count is not None:
+            result["filtered_count"] = filtered_count
+        return format_response(result)
+
+    # --- build response ----------------------------------------------------
+    result: Dict[str, Any] = {
+        "total_items": total_items,
+        "stats": stats,
+        "items": _to_json_serializable(filtered),
+    }
+    if filtered_count is not None:
+        result["filtered_count"] = filtered_count
+    if group_by_key_base:
+        result["distinct_groups"] = total_items
+    return format_response(result)
+
+
+@mcp.tool()
 def item_create(name: str, key_: str, hostid: str, type: int,
                 value_type: int, delay: str = "1m",
                 units: Optional[str] = None,
