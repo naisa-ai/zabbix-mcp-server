@@ -166,7 +166,10 @@ def host_get(hostids: Optional[List[str]] = None,
              output: Union[str, List[str]] = "extend",
              search: Optional[Dict[str, str]] = None,
              filter: Optional[Dict[str, Any]] = None,
-             limit: Optional[int] = None) -> str:
+             limit: Optional[int] = None,
+             select_parent_templates: Optional[List[str]] = None,
+             select_inventory: Optional[List[str]] = None,
+             select_tags: Optional[List[str]] = None) -> str:
     """Get hosts from Zabbix with optional filtering.
     
     Args:
@@ -177,6 +180,9 @@ def host_get(hostids: Optional[List[str]] = None,
         search: Search criteria
         filter: Filter criteria
         limit: Maximum number of results
+        select_parent_templates: Return parentTemplates for each host (e.g. ["templateid", "name"])
+        select_inventory: Return host inventory (e.g. ["vendor", "type", "model"]) for vendor/device info
+        select_tags: Return host tags (e.g. ["tag", "value"]) for flexible metadata like vendor/manufacturer
         
     Returns:
         str: JSON formatted list of hosts
@@ -196,6 +202,12 @@ def host_get(hostids: Optional[List[str]] = None,
         params["filter"] = filter
     if limit:
         params["limit"] = limit
+    if select_parent_templates is not None:
+        params["selectParentTemplates"] = select_parent_templates
+    if select_inventory is not None:
+        params["selectInventory"] = select_inventory
+    if select_tags is not None:
+        params["selectTags"] = select_tags
     
     result = client.host.get(**params)
     return format_response(result)
@@ -449,6 +461,190 @@ def item_get(itemids: Optional[List[str]] = None,
         params["limit"] = limit
     
     result = client.item.get(**params)
+    return format_response(result)
+
+
+@mcp.tool()
+def item_summarize(
+    hostids: Optional[List[str]] = None,
+    groupids: Optional[List[str]] = None,
+    templateids: Optional[List[str]] = None,
+    search: Optional[Dict[str, str]] = None,
+    filter: Optional[Dict[str, Any]] = None,
+    output: Union[str, List[str]] = "extend",
+    sort_by_lastvalue: Optional[str] = None,
+    top_n: Optional[int] = None,
+    value_filter_op: Optional[str] = None,
+    value_filter_threshold: Optional[float] = None,
+    group_by_key_base: bool = False,
+    count_only: bool = False,
+) -> str:
+    """Fetch items with server-side numeric sort, filter, and aggregation.
+
+    Wraps item.get then applies post-processing IN the server so the caller
+    receives a compact result instead of thousands of raw items.  Designed for
+    large-scale queries (1 000+ APs) where returning all items would exceed the
+    LLM context window.
+
+    Args:
+        hostids: List of host IDs to filter by
+        groupids: List of host group IDs to filter by
+        templateids: List of template IDs to filter by
+        search: Search criteria (e.g. {"key_": "radio.utilization"})
+        filter: Exact-match filter criteria
+        output: Fields to fetch from Zabbix (default "extend")
+        sort_by_lastvalue: "asc" or "desc" — numeric sort on lastvalue
+        top_n: After sorting, return only the first N items (default: all)
+        value_filter_op: Comparison operator applied to lastvalue
+            ("<", "<=", ">", ">=", "==", "!=")
+        value_filter_threshold: Numeric threshold for value_filter_op
+        group_by_key_base: If true, group items by base key index
+            (strip trailing single-digit radio suffix like .1/.2),
+            sum numeric lastvalues per group, and treat each group as one row
+        count_only: If true, return only counts (total, per-host,
+            per-key-suffix) without individual items
+
+    Returns:
+        str: JSON object with keys:
+            total_items — number of raw items fetched
+            stats — {min, max, avg} of numeric lastvalues
+            items — list of (top_n) items after sort/filter/group
+            filtered_count — items matching value_filter (when filter set)
+            distinct_groups — unique base-key groups (when group_by_key_base)
+            counts_by_host — {hostid: count} (when count_only)
+    """
+    client = get_zabbix_client()
+    params: Dict[str, Any] = {"output": output}
+    if hostids:
+        params["hostids"] = hostids
+    if groupids:
+        params["groupids"] = groupids
+    if templateids:
+        params["templateids"] = templateids
+    if search:
+        params["search"] = search
+    if filter:
+        params["filter"] = filter
+
+    raw_items = client.item.get(**params)
+    if not isinstance(raw_items, list):
+        raw_items = [raw_items] if raw_items else []
+
+    total_items = len(raw_items)
+
+    # --- helpers -----------------------------------------------------------
+    def _safe_float(val: Any) -> Optional[float]:
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    def _key_base(item: Dict[str, Any]) -> str:
+        key = (item.get("key_") or item.get("key")) or ""
+        idx = ""
+        if "[" in key and "]" in key:
+            idx = key[key.index("[") + 1 : key.rindex("]")].strip('"')
+        if not idx:
+            return key
+        parts = idx.rsplit(".", 1)
+        if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 1:
+            return parts[0]
+        return idx
+
+    # --- group by key base -------------------------------------------------
+    if group_by_key_base:
+        from collections import defaultdict
+        groups: Dict[str, Dict[str, Any]] = {}
+        group_items: Dict[str, list] = defaultdict(list)
+        for it in raw_items:
+            base = _key_base(it)
+            group_items[base].append(it)
+        for base, items_in_group in group_items.items():
+            total = 0.0
+            representative = items_in_group[0].copy()
+            hostid = representative.get("hostid", "")
+            item_ids = []
+            for it in items_in_group:
+                v = _safe_float(it.get("lastvalue"))
+                if v is not None:
+                    total += v
+                item_ids.append(it.get("itemid", ""))
+            representative["lastvalue"] = str(total)
+            representative["_group_base"] = base
+            representative["_group_itemids"] = item_ids
+            representative["_group_size"] = len(items_in_group)
+            groups[base] = representative
+        raw_items = list(groups.values())
+
+    # --- value filter ------------------------------------------------------
+    _OPS = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
+            ">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
+            "==": lambda a, b: a == b, "!=": lambda a, b: a != b}
+    filtered = raw_items
+    filtered_count = None
+    if value_filter_op and value_filter_threshold is not None:
+        op_fn = _OPS.get(value_filter_op)
+        if op_fn:
+            filtered = [
+                it for it in raw_items
+                if (v := _safe_float(it.get("lastvalue"))) is not None
+                and op_fn(v, value_filter_threshold)
+            ]
+            filtered_count = len(filtered)
+    else:
+        filtered = raw_items
+
+    # --- sort by lastvalue -------------------------------------------------
+    if sort_by_lastvalue in ("asc", "desc"):
+        filtered.sort(
+            key=lambda it: _safe_float(it.get("lastvalue")) or 0.0,
+            reverse=(sort_by_lastvalue == "desc"),
+        )
+
+    # --- top_n -------------------------------------------------------------
+    if top_n is not None and top_n > 0:
+        filtered = filtered[:top_n]
+
+    # --- stats -------------------------------------------------------------
+    numeric_vals = [
+        v for it in raw_items
+        if (v := _safe_float(it.get("lastvalue"))) is not None
+    ]
+    stats: Dict[str, Any] = {}
+    if numeric_vals:
+        stats = {
+            "min": round(min(numeric_vals), 4),
+            "max": round(max(numeric_vals), 4),
+            "avg": round(sum(numeric_vals) / len(numeric_vals), 4),
+        }
+
+    # --- count_only mode ---------------------------------------------------
+    if count_only:
+        from collections import Counter
+        host_counts = Counter(it.get("hostid", "") for it in raw_items)
+        result = {
+            "total_items": total_items,
+            "stats": stats,
+            "counts_by_host": dict(host_counts),
+        }
+        if group_by_key_base:
+            result["distinct_groups"] = len(raw_items)
+        if filtered_count is not None:
+            result["filtered_count"] = filtered_count
+        return format_response(result)
+
+    # --- build response ----------------------------------------------------
+    result: Dict[str, Any] = {
+        "total_items": total_items,
+        "stats": stats,
+        "items": _to_json_serializable(filtered),
+    }
+    if filtered_count is not None:
+        result["filtered_count"] = filtered_count
+    if group_by_key_base:
+        result["distinct_groups"] = total_items
     return format_response(result)
 
 
@@ -929,7 +1125,8 @@ def history_get(itemids: List[str], history: int = 0,
                 time_till: Optional[int] = None,
                 limit: Optional[int] = None,
                 sortfield: str = "clock",
-                sortorder: str = "DESC") -> str:
+                sortorder: str = "DESC",
+                output: Union[str, List[str]] = "extend") -> str:
     """Get history data from Zabbix.
     
     Args:
@@ -940,6 +1137,7 @@ def history_get(itemids: List[str], history: int = 0,
         limit: Maximum number of results
         sortfield: Field to sort by
         sortorder: Sort order (ASC or DESC)
+        output: Fields to return ("extend" for all, or list of field names)
         
     Returns:
         str: JSON formatted history data
@@ -949,7 +1147,8 @@ def history_get(itemids: List[str], history: int = 0,
         "itemids": itemids,
         "history": history,
         "sortfield": sortfield,
-        "sortorder": sortorder
+        "sortorder": sortorder,
+        "output": output
     }
     
     if time_from:
@@ -967,7 +1166,8 @@ def history_get(itemids: List[str], history: int = 0,
 @mcp.tool()
 def trend_get(itemids: List[str], time_from: Optional[int] = None,
               time_till: Optional[int] = None,
-              limit: Optional[int] = None) -> str:
+              limit: Optional[int] = None,
+              output: Union[str, List[str]] = "extend") -> str:
     """Get trend data from Zabbix.
     
     Args:
@@ -975,12 +1175,13 @@ def trend_get(itemids: List[str], time_from: Optional[int] = None,
         time_from: Start time (Unix timestamp)
         time_till: End time (Unix timestamp)
         limit: Maximum number of results
+        output: Fields to return ("extend" for all, or list of field names)
         
     Returns:
         str: JSON formatted trend data
     """
     client = get_zabbix_client()
-    params = {"itemids": itemids}
+    params = {"itemids": itemids, "output": output}
     
     if time_from:
         params["time_from"] = time_from
@@ -1642,136 +1843,133 @@ def main():
         raise
 
 
-# WLC tools (Wireless LAN Controller / active APs)
-from . import helper  # noqa: E402
-from .wlc_tools import (  # noqa: E402
-    get_active_wlc_hosts as _get_active_wlc_hosts,
-    get_active_ap_client_counts as _get_active_ap_client_counts,
-    get_active_aps_for_host as _get_active_aps_for_host,
-    get_client_counts_for_ap_hosts as _get_client_counts_for_ap_hosts,
-    get_clients_per_ap as _get_clients_per_ap,
-    get_host_item_errors as _get_host_item_errors,
-)
+# WLC tools (Wireless LAN Controller / active APs) - disabled by default
+ENABLE_WLC_TOOLS = False
 
-
-@mcp.tool()
-async def get_active_wlc_hosts(
-    wlc_hostid: Optional[Union[str, int]] = None,
-    groupids: Optional[str] = None,
-    data_age_seconds: Optional[int] = None,
-) -> str:
-    """Get active WLC hosts (Wireless LAN Controllers) with recent item data.
-    
-    Args:
-        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
-        groupids: Optional comma-separated host group IDs to filter by
-        data_age_seconds: Maximum age in seconds for item data (default from env ZABBIX_ACTIVE_HOSTS_DATA_AGE_SECONDS or 3600)
-        
-    Returns:
-        str: JSON with hosts list and count (hostid, host, name per host)
-    """
-    result = await _get_active_wlc_hosts(
-        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids, data_age_seconds=data_age_seconds
+if ENABLE_WLC_TOOLS:
+    from . import helper  # noqa: E402
+    from .wlc_tools import (  # noqa: E402
+        get_active_wlc_hosts as _get_active_wlc_hosts,
+        get_active_ap_client_counts as _get_active_ap_client_counts,
+        get_active_aps_for_host as _get_active_aps_for_host,
+        get_client_counts_for_ap_hosts as _get_client_counts_for_ap_hosts,
+        get_clients_per_ap as _get_clients_per_ap,
+        get_host_item_errors as _get_host_item_errors,
     )
-    return format_response(result)
 
+    @mcp.tool()
+    async def get_active_wlc_hosts(
+        wlc_hostid: Optional[Union[str, int]] = None,
+        groupids: Optional[str] = None,
+        data_age_seconds: Optional[int] = None,
+    ) -> str:
+        """Get active WLC hosts (Wireless LAN Controllers) with recent item data.
 
-@mcp.tool()
-async def get_host_item_errors(
-    wlc_hostid: Optional[Union[str, int]] = None,
-    host_name: Optional[str] = None,
-) -> str:
-    """Get Zabbix items that have errors for a WLC host.
-    
-    Args:
-        wlc_hostid: WLC host ID (str or int). Use either wlc_hostid or host_name
-        host_name: WLC host name (resolved to hostid). Use either wlc_hostid or host_name
-        
-    Returns:
-        str: JSON with hostid, host, items_with_errors list (key_, name, state, error), count, total_items
-    """
-    result = await _get_host_item_errors(wlc_hostid=helper.normalize_hostid(wlc_hostid), host_name=host_name)
-    return format_response(result)
+        Args:
+            wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
+            groupids: Optional comma-separated host group IDs to filter by
+            data_age_seconds: Maximum age in seconds for item data (default from env ZABBIX_ACTIVE_HOSTS_DATA_AGE_SECONDS or 3600)
 
-
-@mcp.tool()
-async def get_client_counts_for_ap_hosts(hostids: Optional[Union[List[str], str, int]] = None) -> str:
-    """Get total client count per WLC host for given host IDs.
-    
-    Args:
-        hostids: List of host IDs (e.g. ["10782", "10783"]), comma-separated string, or single id (str/int)
-        
-    Returns:
-        str: JSON with counts dict (hostid -> total client count)
-    """
-    try:
-        ids = helper.normalize_hostids(hostids)
-        if not ids:
-            return format_response({"error": "hostids required (list of host IDs)", "counts": {}})
-        result = await _get_client_counts_for_ap_hosts(hostids=ids)
+        Returns:
+            str: JSON with hosts list and count (hostid, host, name per host)
+        """
+        result = await _get_active_wlc_hosts(
+            wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids, data_age_seconds=data_age_seconds
+        )
         return format_response(result)
-    except Exception as e:
-        return format_response({"error": str(e), "counts": {}})
 
+    @mcp.tool()
+    async def get_host_item_errors(
+        wlc_hostid: Optional[Union[str, int]] = None,
+        host_name: Optional[str] = None,
+    ) -> str:
+        """Get Zabbix items that have errors for a WLC host.
 
-@mcp.tool()
-async def get_clients_per_ap(hostids: Optional[Union[List[str], str, int]] = None) -> str:
-    """Get client count per AP for given WLC host IDs (Cisco and Aruba).
-    
-    Args:
-        hostids: List of host IDs (e.g. ["10782", "10783"]), comma-separated string, or single id (str/int)
-        
-    Returns:
-        str: JSON with by_host dict (hostid -> list of {ap, client_count}) and hostids list
-    """
-    try:
-        ids = helper.normalize_hostids(hostids)
-        if not ids:
-            return format_response({"error": "hostids required (list of host IDs)", "by_host": {}, "hostids": []})
-        result = await _get_clients_per_ap(hostids=ids)
+        Args:
+            wlc_hostid: WLC host ID (str or int). Use either wlc_hostid or host_name
+            host_name: WLC host name (resolved to hostid). Use either wlc_hostid or host_name
+
+        Returns:
+            str: JSON with hostid, host, items_with_errors list (key_, name, state, error), count, total_items
+        """
+        result = await _get_host_item_errors(wlc_hostid=helper.normalize_hostid(wlc_hostid), host_name=host_name)
         return format_response(result)
-    except Exception as e:
-        return format_response({"error": str(e), "by_host": {}, "hostids": []})
 
+    @mcp.tool()
+    async def get_client_counts_for_ap_hosts(hostids: Optional[Union[List[str], str, int]] = None) -> str:
+        """Get total client count per WLC host for given host IDs.
 
-@mcp.tool()
-async def get_active_aps_for_host(hostid: Optional[Union[str, int]] = None) -> str:
-    """Get active APs for a single WLC host (Cisco and Aruba).
-    
-    Args:
-        hostid: WLC host ID (str or int)
-        
-    Returns:
-        str: JSON with hostid, vendor, active_aps list (mac, ap_name, ap_ip, etc.) and count
-    """
-    try:
-        hid = helper.normalize_hostid(hostid)
-        if not hid:
-            return format_response({"error": "hostid required", "hostid": "", "active_aps": [], "count": 0})
-        result = await _get_active_aps_for_host(hostid=hid)
+        Args:
+            hostids: List of host IDs (e.g. ["10782", "10783"]), comma-separated string, or single id (str/int)
+
+        Returns:
+            str: JSON with counts dict (hostid -> total client count)
+        """
+        try:
+            ids = helper.normalize_hostids(hostids)
+            if not ids:
+                return format_response({"error": "hostids required (list of host IDs)", "counts": {}})
+            result = await _get_client_counts_for_ap_hosts(hostids=ids)
+            return format_response(result)
+        except Exception as e:
+            return format_response({"error": str(e), "counts": {}})
+
+    @mcp.tool()
+    async def get_clients_per_ap(hostids: Optional[Union[List[str], str, int]] = None) -> str:
+        """Get client count per AP for given WLC host IDs (Cisco and Aruba).
+
+        Args:
+            hostids: List of host IDs (e.g. ["10782", "10783"]), comma-separated string, or single id (str/int)
+
+        Returns:
+            str: JSON with by_host dict (hostid -> list of {ap, client_count}) and hostids list
+        """
+        try:
+            ids = helper.normalize_hostids(hostids)
+            if not ids:
+                return format_response({"error": "hostids required (list of host IDs)", "by_host": {}, "hostids": []})
+            result = await _get_clients_per_ap(hostids=ids)
+            return format_response(result)
+        except Exception as e:
+            return format_response({"error": str(e), "by_host": {}, "hostids": []})
+
+    @mcp.tool()
+    async def get_active_aps_for_host(hostid: Optional[Union[str, int]] = None) -> str:
+        """Get active APs for a single WLC host (Cisco and Aruba).
+
+        Args:
+            hostid: WLC host ID (str or int)
+
+        Returns:
+            str: JSON with hostid, vendor, active_aps list (mac, ap_name, ap_ip, etc.) and count
+        """
+        try:
+            hid = helper.normalize_hostid(hostid)
+            if not hid:
+                return format_response({"error": "hostid required", "hostid": "", "active_aps": [], "count": 0})
+            result = await _get_active_aps_for_host(hostid=hid)
+            return format_response(result)
+        except Exception as e:
+            return format_response({"error": str(e), "hostid": "", "active_aps": [], "count": 0})
+
+    @mcp.tool()
+    async def get_active_ap_client_counts(
+        wlc_hostid: Optional[Union[str, int]] = None,
+        groupids: Optional[str] = None,
+    ) -> str:
+        """Get active APs with client counts for WLC hosts (all hosts or filtered).
+
+        Args:
+            wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
+            groupids: Optional comma-separated host group IDs to filter by
+
+        Returns:
+            str: JSON with active_aps list (mac, ap_host, ap_name, ap_ip, client_count) and count
+        """
+        result = await _get_active_ap_client_counts(
+            wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
+        )
         return format_response(result)
-    except Exception as e:
-        return format_response({"error": str(e), "hostid": "", "active_aps": [], "count": 0})
-
-
-@mcp.tool()
-async def get_active_ap_client_counts(
-    wlc_hostid: Optional[Union[str, int]] = None,
-    groupids: Optional[str] = None,
-) -> str:
-    """Get active APs with client counts for WLC hosts (all hosts or filtered).
-    
-    Args:
-        wlc_hostid: Optional WLC host ID (str or int) to filter by a single host
-        groupids: Optional comma-separated host group IDs to filter by
-        
-    Returns:
-        str: JSON with active_aps list (mac, ap_host, ap_name, ap_ip, client_count) and count
-    """
-    result = await _get_active_ap_client_counts(
-        wlc_hostid=helper.normalize_hostid(wlc_hostid), groupids=groupids
-    )
-    return format_response(result)
 
 
 __all__ = ["main", "mcp"]
