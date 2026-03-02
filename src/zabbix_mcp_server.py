@@ -1052,6 +1052,7 @@ def event_get(eventids: Optional[List[str]] = None,
               output: Union[str, List[str]] = "extend",
               time_from: Optional[int] = None,
               time_till: Optional[int] = None,
+              severities: Optional[List[int]] = None,
               limit: Optional[int] = None) -> str:
     """Get events from Zabbix with optional filtering.
     
@@ -1063,6 +1064,7 @@ def event_get(eventids: Optional[List[str]] = None,
         output: Output format (extend or list of specific fields)
         time_from: Start time (Unix timestamp)
         time_till: End time (Unix timestamp)
+        severities: List of severity levels to filter by (0=not classified, 1=info, 2=warning, 3=average, 4=high, 5=disaster)
         limit: Maximum number of results
         
     Returns:
@@ -1083,6 +1085,8 @@ def event_get(eventids: Optional[List[str]] = None,
         params["time_from"] = time_from
     if time_till:
         params["time_till"] = time_till
+    if severities:
+        params["severities"] = severities
     if limit:
         params["limit"] = limit
     
@@ -1091,13 +1095,13 @@ def event_get(eventids: Optional[List[str]] = None,
 
 
 @mcp.tool()
-def event_acknowledge(eventids: List[str], action: int = 1,
+def event_acknowledge(eventids: List[str], action: int = 2,
                       message: Optional[str] = None) -> str:
     """Acknowledge events in Zabbix.
     
     Args:
         eventids: List of event IDs to acknowledge
-        action: Acknowledge action (1=acknowledge, 2=close, etc.)
+        action: Bitmask: 1=close problem, 2=acknowledge, 4=add message, 8=change severity, 16=unacknowledge, 32=suppress, 64=unsuppress. Combine with addition (e.g. 6=acknowledge+message).
         message: Acknowledge message
         
     Returns:
@@ -1131,7 +1135,7 @@ def history_get(itemids: List[str], history: int = 0,
     
     Args:
         itemids: List of item IDs to get history for
-        history: History type (0=float, 1=character, 2=log, 3=unsigned, 4=text)
+        history: History type (0=float, 1=character, 2=log, 3=unsigned, 4=text, 5=binary)
         time_from: Start time (Unix timestamp)
         time_till: End time (Unix timestamp)
         limit: Maximum number of results
